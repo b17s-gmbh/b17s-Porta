@@ -1,0 +1,86 @@
+@page "/"
+@model Demo.Bff.Pages.IndexModel
+@{
+    Layout = null;
+}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>b17s.Porta demo — @Model.Provider</title>
+    <link rel="stylesheet" href="~/css/site.css" />
+</head>
+<body>
+    <h1>b17s.Porta BFF demo</h1>
+    <p class="muted">Identity provider for this instance: <strong>@Model.Provider</strong></p>
+
+    @if (Model.IsAuthenticated)
+    {
+        <p>✅ Signed in as <strong>@Model.UserName</strong>.</p>
+        <p><a class="button" href="/bff/logout">Log out</a></p>
+
+        <h2>Claims</h2>
+        <table>
+            <tbody>
+                @foreach (var claim in User.Claims)
+                {
+                    <tr>
+                        <td>@claim.Type</td>
+                        <td>@claim.Value</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <p>🔒 You are not signed in.</p>
+        <p><a class="button" href="/bff/login">Log in with @Model.Provider</a></p>
+
+        @if (Model.DemoLogin is { } login)
+        {
+            <h2>Demo credentials</h2>
+            <p class="muted">Copy these into the @Model.Provider login form:</p>
+            <table>
+                <tbody>
+                    <tr>
+                        <td>Username</td>
+                        <td><code>@login.User</code></td>
+                        <td><button class="copy" type="button" data-copy="@login.User">Copy</button></td>
+                    </tr>
+                    <tr>
+                        <td>Password</td>
+                        <td><code>@login.Password</code></td>
+                        <td><button class="copy" type="button" data-copy="@login.Password">Copy</button></td>
+                    </tr>
+                </tbody>
+            </table>
+        }
+    }
+
+    <h2>Try the API</h2>
+    <p class="muted">Each call runs inline against this BFF (with your session cookie) — you stay on this page.</p>
+
+    <div class="endpoints">
+        @foreach (var endpoint in Model.Endpoints)
+        {
+            <div class="endpoint">
+                <div class="endpoint-head">
+                    <span class="method">@endpoint.Method</span>
+                    <code class="path">@endpoint.Path</code>
+                    @if (endpoint.RequiresAuth)
+                    {
+                        <span class="badge" title="Requires an authenticated BFF session">auth</span>
+                    }
+                    <button class="run" type="button" data-method="@endpoint.Method" data-url="@endpoint.Path">Run</button>
+                </div>
+                <p class="endpoint-desc muted">@endpoint.Description</p>
+                <pre class="endpoint-result" hidden></pre>
+            </div>
+        }
+    </div>
+
+    <script src="~/js/site.js"></script>
+</body>
+</html>

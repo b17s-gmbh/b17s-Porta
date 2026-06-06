@@ -1,0 +1,20 @@
+<Solution>
+  <Folder Name="/docs/">
+    <File Path="docs/api-gateway.md" />
+    <File Path="docs/authentication.md" />
+    <File Path="docs/configuration.md" />
+    <File Path="docs/endpoints.md" />
+    <File Path="docs/graphql.md" />
+    <File Path="docs/ha-deployment.md" />
+    <File Path="docs/oidc.md" />
+    <File Path="docs/raw-forwarding.md" />
+    <File Path="docs/telemetry.md" />
+    <File Path="docs/transformers.md" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/b17s.Porta.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/b17s.Porta.Tests.csproj" />
+  </Folder>
+</Solution>

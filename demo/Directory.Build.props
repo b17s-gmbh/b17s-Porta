@@ -1,0 +1,19 @@
+<Project>
+
+  <!--
+    Demo-only build settings. This file deliberately shadows the repository root so the
+    demo projects (Aspire AppHost, sample BFF, backend, provisioner, E2E tests) are fully
+    isolated from the packable b17s.Porta library. Nothing here is packed or shipped.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <!-- The demo is illustrative; don't fail the whole demo build on missing XML docs. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>

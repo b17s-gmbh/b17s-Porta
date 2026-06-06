@@ -1,0 +1,8 @@
+# Runtime artifacts produced by the Zitadel auto-provisioning step.
+# The Zitadel container writes its first-instance machine-key here, and the
+# provisioner writes the generated BFF client id/secret here. Both are
+# regenerated on every fresh run, so they must never be committed.
+.zitadel/
+
+# Playwright browser download markers (browsers live under the user profile).
+.playwright/

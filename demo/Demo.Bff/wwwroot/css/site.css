@@ -1,0 +1,182 @@
+:root {
+    color-scheme: dark light;
+
+    /* Dark theme (default — easy on the eyes). */
+    --bg: #0d1117;
+    --fg: #c9d1d9;
+    --muted: #8b949e;
+    --code-bg: #161b22;
+    --border: #30363d;
+    --accent: #1f6feb;
+    --accent-fg: #ffffff;
+    --button-bg: #161b22;
+    --button-hover: #21262d;
+}
+
+/* Honour an explicit light-mode preference. */
+@media (prefers-color-scheme: light) {
+    :root {
+        --bg: #ffffff;
+        --fg: #1f2328;
+        --muted: #666666;
+        --code-bg: #f3f3f3;
+        --border: #dddddd;
+        --accent: #1f6feb;
+        --accent-fg: #ffffff;
+        --button-bg: #ffffff;
+        --button-hover: #f3f3f3;
+    }
+}
+
+body {
+    font-family: system-ui, sans-serif;
+    max-width: 48rem;
+    margin: 3rem auto;
+    padding: 0 1rem;
+    line-height: 1.5;
+    background: var(--bg);
+    color: var(--fg);
+}
+
+a {
+    color: var(--accent);
+}
+
+code {
+    background: var(--code-bg);
+    padding: .1rem .3rem;
+    border-radius: .2rem;
+}
+
+a.button {
+    display: inline-block;
+    margin: .25rem .5rem .25rem 0;
+    padding: .5rem .9rem;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-radius: .4rem;
+    text-decoration: none;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+table {
+    border-collapse: collapse;
+}
+
+td {
+    border: 1px solid var(--border);
+    padding: .2rem .5rem;
+    font-size: .9rem;
+}
+
+button.copy {
+    cursor: pointer;
+    padding: .15rem .5rem;
+    border: 1px solid var(--border);
+    border-radius: .3rem;
+    background: var(--button-bg);
+    color: var(--fg);
+    font-size: .85rem;
+}
+
+button.copy:hover {
+    background: var(--button-hover);
+}
+
+/* --- Inline API runner --------------------------------------------------- */
+.endpoints {
+    display: flex;
+    flex-direction: column;
+    gap: .75rem;
+}
+
+.endpoint {
+    border: 1px solid var(--border);
+    border-radius: .5rem;
+    padding: .75rem 1rem;
+    background: var(--code-bg);
+}
+
+.endpoint-head {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    flex-wrap: wrap;
+}
+
+.endpoint .method {
+    font: .75rem/1 ui-monospace, monospace;
+    font-weight: 700;
+    letter-spacing: .04em;
+    padding: .2rem .4rem;
+    border-radius: .3rem;
+    background: var(--accent);
+    color: var(--accent-fg);
+}
+
+.endpoint .path {
+    font-size: .95rem;
+    background: transparent;
+    padding: 0;
+}
+
+.endpoint .badge {
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    padding: .1rem .4rem;
+    border: 1px solid var(--border);
+    border-radius: .3rem;
+    color: var(--muted);
+}
+
+.endpoint .run {
+    margin-left: auto;
+    cursor: pointer;
+    padding: .3rem .9rem;
+    border: 1px solid var(--accent);
+    border-radius: .35rem;
+    background: var(--accent);
+    color: var(--accent-fg);
+    font-size: .85rem;
+    font-weight: 600;
+}
+
+.endpoint .run:hover {
+    filter: brightness(1.1);
+}
+
+.endpoint .run:disabled {
+    opacity: .6;
+    cursor: progress;
+}
+
+.endpoint-desc {
+    margin: .5rem 0 0;
+    font-size: .9rem;
+}
+
+.endpoint-result {
+    margin: .6rem 0 0;
+    padding: .6rem .75rem;
+    border-radius: .4rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+    font: .82rem/1.45 ui-monospace, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 22rem;
+    overflow: auto;
+}
+
+.endpoint-result.ok {
+    border-left-color: #3fb950;
+}
+
+.endpoint-result.err {
+    border-left-color: #f85149;
+}

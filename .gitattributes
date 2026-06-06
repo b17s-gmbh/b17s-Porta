@@ -1,0 +1,28 @@
+# Normalize line endings: store LF in the repository, check out CRLF in the
+# working tree to match .editorconfig (end_of_line = crlf). This keeps the
+# committed blobs platform-neutral while giving developers CRLF locally.
+* text=auto eol=crlf
+
+# Source and project files explicitly use CRLF in the working tree.
+*.cs       text eol=crlf
+*.csproj   text eol=crlf
+*.slnx     text eol=crlf
+*.props    text eol=crlf
+*.targets  text eol=crlf
+*.xml      text eol=crlf
+*.json     text eol=crlf
+*.yml      text eol=crlf
+*.yaml     text eol=crlf
+*.md       text eol=crlf
+*.editorconfig text eol=crlf
+
+# Binary files: never normalize.
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.ico      binary
+*.snk      binary
+*.pfx      binary
+*.dll      binary
+*.exe      binary
