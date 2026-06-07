@@ -7,4 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-04-23
+## [0.1.0] - 2026-06-08
+### Added
+- BFF Transformer (TransformerBase, PassThroughTransformer, AuthenticatedTransformer, MultiBackendTransformer, AggregatingTransformer)
+- Multi-backend aggregation (AggregatingTransformer)
+- Zero-code pass-through (PassThroughTransformer)
+- Per-backend authentication policies (None, BasicAuth, BearerToken, TokenExchange)
+- Fluent endpoint builder (WithAuth, WithTimeout, WithRetries, WithTokenExchange)
+- Startup configuration validatio
+- Multiple auth providers
+- Token lifecycle
+- Session administration
+- OIDC discovery
+- Raw forwarding
+- GraphQL support
+- SSRF guard for token forwarding 
+- Open-redirect protection
+- Signed, time-limited return-URL tokens
+- Constant-time Basic auth
+- Secret-classified log redaction
+- HA-ready, no sticky sessions
+- Data Protection persistence
+- Resilience
+- OpenTelemetry
+- Runnable demo
+- UnitTests

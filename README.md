@@ -86,6 +86,21 @@ app.Run();
 | [HA Deployment](docs/ha-deployment.md) | Running multiple replicas behind a load balancer without sticky sessions |
 | [API Gateway Use](docs/api-gateway.md) | When to use this library as a gateway, and when to pick something else |
 
+## Try it (runnable demo)
+
+A self-contained, run-out-of-the-box demo lives in [demo/](demo/README.md). One command brings up a
+complete BFF topology against **two** identity providers — Keycloak and Zitadel — orchestrated by
+.NET Aspire, plus end-to-end login tests against both:
+
+```bash
+cd demo
+aspire run          # or: dotnet run --project Demo.AppHost
+```
+
+A container runtime (Docker Desktop or Podman) is the only prerequisite — the IdPs, database, and
+seeded test users are provisioned automatically. See [demo/README.md](demo/README.md) for the topology,
+seeded credentials, exposed endpoints, and how to run the functional/E2E suite.
+
 ## Transformer Hierarchy
 
 Choose the right base class for your use case:

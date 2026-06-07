@@ -10,24 +10,27 @@ namespace Demo.Bff;
 /// (None), and <c>internal</c> uses the BFF's service credentials (BasicAuth). The transformer
 /// itself is auth-agnostic: it just names the backends and Porta applies each one's policy.
 /// </summary>
+/// <remarks>
+/// Uses the declarative <see cref="AggregatingTransformer{TResponse}"/>: <see cref="Configure"/>
+/// names the backends (and their response types), Porta runs them in parallel with a child
+/// telemetry span each, and <see cref="MapResults"/> reads the typed results back by name.
+/// </remarks>
 internal sealed class UserDashboardTransformer(IConfiguration configuration)
-    : MultiBackendTransformer<DashboardResponse>
+    : AggregatingTransformer<DashboardResponse>
 {
     private readonly string _provider = configuration["Demo:ProviderLabel"] ?? "OIDC";
 
-    public override async Task<DashboardResponse> TransformAsync(TransformerContext context)
+    protected override void Configure(AggregatorBuilder builder)
     {
-        var results = await CallBackendsInParallelSafeAsync<object>(
-        [
-            async ct => (await CallNamedBackendAsync<BackendIdentity>("me", context, cancellationToken: ct)).Value,
-            async ct => (await CallNamedBackendAsync<WeatherForecast[]>("weather", context, cancellationToken: ct)).Value,
-            async ct => (await CallNamedBackendAsync<InternalResource>("internal", context, cancellationToken: ct)).Value,
-        ], context);
-
-        var identity = results[0] as BackendIdentity;
-        var weather = results[1] as WeatherForecast[];
-        var internalResource = results[2] as InternalResource;
-
-        return new DashboardResponse(_provider, identity, weather ?? [], internalResource);
+        builder.Backend<BackendIdentity>("me");
+        builder.Backend<WeatherForecast[]>("weather");
+        builder.Backend<InternalResource>("internal");
     }
+
+    protected override DashboardResponse MapResults(AggregatorResults results, TransformerContext context)
+        => new(
+            _provider,
+            results.Get<BackendIdentity>("me"),
+            results.Get<WeatherForecast[]>("weather") ?? [],
+            results.Get<InternalResource>("internal"));
 }
