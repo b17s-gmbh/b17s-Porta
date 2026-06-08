@@ -179,6 +179,10 @@ Standard hop-by-hop headers (`Connection`, `Host`, `Transfer-Encoding`, etc.) ar
 
 `Content-Length` and `Transfer-Encoding` are additionally stripped from the *outbound request* - `StreamContent` will re-assert the correct framing for the body the BFF actually sends. Carrying the inbound values forward would create a request-smuggling primitive (CL.TE / CL.CL) where the BFF and backend disagree on where the request ends. Response-side `Content-Length` is left intact and flows back to the client normally.
 
+Entity (content) headers other than the framing pair above are **preserved** on the forwarded body: `Content-Type`, `Content-Encoding`, `Content-Disposition`, `Content-Language`, `Content-Range`, `Content-Location`, `Content-MD5`, `Allow`, `Expires`, and `Last-Modified` are carried onto the outbound request content rather than dropped, so uploads (e.g. a `gzip`-encoded or ranged body) reach the backend intact.
+
+The request body is forwarded for **any** HTTP method that actually carries one - detected via `Content-Length` or a chunked `Transfer-Encoding`, not an allowlist of verbs - so a `DELETE` or `OPTIONS` with a body (e.g. a bulk-delete payload) is proxied just like `POST`/`PUT`/`PATCH`. A bodyless request (e.g. a plain `GET`) sends no request content.
+
 ## Response Size and Idle Timeouts
 
 To bound BFF egress and defeat slow-loris backends, raw-forward responses are subject to two limits configured on `PortaCoreOptions`:

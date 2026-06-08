@@ -394,6 +394,17 @@ public record BackendRequest
     public Dictionary<string, string>? Headers { get; init; }
 
     /// <summary>
+    /// Entity (content) headers to apply to the request body, such as
+    /// <c>Content-Encoding</c>, <c>Content-Disposition</c>, <c>Content-Language</c> or
+    /// <c>Content-Range</c>. These cannot live in <see cref="Headers"/>: the request-headers
+    /// collection silently rejects content headers, so raw forwarding plumbs them here and the
+    /// caller applies them to the outbound <see cref="System.Net.Http.StreamContent"/>. Only
+    /// honoured when a request body is forwarded. <c>Content-Type</c> is supplied separately via
+    /// the body overload of <see cref="IBackendCaller.CallRawAsync(BackendRequest, System.IO.Stream, string, System.Threading.CancellationToken)"/>.
+    /// </summary>
+    public Dictionary<string, string>? ContentHeaders { get; init; }
+
+    /// <summary>
     /// Whether to forward the access token to the backend.
     /// Default: true
     /// </summary>

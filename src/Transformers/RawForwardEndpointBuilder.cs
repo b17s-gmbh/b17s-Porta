@@ -292,10 +292,14 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 Stream? requestBody = null;
                 string? contentType = null;
 
-                // Unconditionally proxy bodies for verbs that carry payloads.
-                // HTTP/2 and HTTP/3 data frames do not require Content-Length or Transfer-Encoding headers.
-                var requestMethod = context.Request.Method;
-                if (HttpMethods.IsPost(requestMethod) || HttpMethods.IsPut(requestMethod) || HttpMethods.IsPatch(requestMethod))
+                // Forward the body for any verb that actually carries one - not just POST/PUT/PATCH.
+                // DELETE and OPTIONS legitimately ship payloads (e.g. bulk-delete bodies), so gate on
+                // whether a body is present rather than an allowlist of methods. Detect a real body via
+                // Content-Length or a chunked Transfer-Encoding instead of "is the stream readable"
+                // (the inbound Body stream is always readable), so a bodyless GET never gets an empty
+                // StreamContent attached. HTTP/2 and HTTP/3 data frames do not require Content-Length
+                // or Transfer-Encoding headers, but RequestHasBody handles the framed cases too.
+                if (RequestHasBody(context.Request))
                 {
                     requestBody = context.Request.Body;
                     contentType = context.Request.ContentType ?? "application/octet-stream";
@@ -312,11 +316,26 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                     destinationHost = destUri.Host;
                 }
 
-                // Copy headers from incoming request, stripping sensitive headers unless explicitly allowed
+                // Copy headers from incoming request, stripping sensitive headers unless explicitly
+                // allowed. Entity (content) headers are split off into contentHeaders: the request-
+                // headers collection silently rejects them, so they must be lifted onto the forwarded
+                // StreamContent instead of being dropped (Content-Encoding, Content-Disposition, ...).
+                var contentHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var (key, value) in transformerContext.RequestHeaders)
                 {
                     if (!ShouldForwardClientHeader(key, destinationHost, headerPassThrough))
                     {
+                        continue;
+                    }
+
+                    if (RawForwardHeaderFilter.IsContentHeader(key))
+                    {
+                        // Content-Type is forwarded via the dedicated contentType path below, so it is
+                        // not duplicated here. Other entity headers are carried on the body content.
+                        if (!key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase))
+                        {
+                            contentHeaders[key] = value.ToString();
+                        }
                         continue;
                     }
 
@@ -360,7 +379,7 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 {
                     customHeaders[header.Key] = string.Join(",", header.Value);
                 }
-                backendRequest = backendRequest with { Url = finalUrl, Headers = customHeaders };
+                backendRequest = backendRequest with { Url = finalUrl, Headers = customHeaders, ContentHeaders = contentHeaders };
 
                 // Call backend
                 if (requestBody != null && contentType != null)
@@ -638,6 +657,24 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
         }
     }
 
+    /// <summary>
+    /// Whether the incoming request carries a body that should be forwarded to the backend.
+    /// Gated on Content-Length or a chunked Transfer-Encoding rather than stream readability,
+    /// because the inbound request body stream is always readable - even for bodyless verbs.
+    /// </summary>
+    private static bool RequestHasBody(HttpRequest request)
+    {
+        if (request.ContentLength is > 0)
+        {
+            return true;
+        }
+
+        // Chunked uploads omit Content-Length; detect them via Transfer-Encoding: chunked.
+        var transferEncoding = request.Headers.TransferEncoding;
+        return transferEncoding.Count > 0
+            && transferEncoding.Any(v => v != null && v.Contains("chunked", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static bool ShouldForwardClientHeader(
         string headerName,
         string? destinationHost,
@@ -680,6 +717,27 @@ internal static class RawForwardHeaderFilter
     {
         return headerName.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
                headerName.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// HTTP entity (content) headers that belong on <see cref="System.Net.Http.HttpContent.Headers"/>
+    /// rather than the request line. <c>HttpRequestMessage.Headers</c> silently rejects these, so
+    /// raw-forward must lift them onto the forwarded <see cref="System.Net.Http.StreamContent"/> or
+    /// they are lost. <c>Content-Length</c> is deliberately excluded - it is a framing header
+    /// (see <see cref="IsRequestFramingHeader"/>) re-asserted by the outbound content itself.
+    /// </summary>
+    public static bool IsContentHeader(string headerName)
+    {
+        return headerName.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Disposition", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Language", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Location", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Range", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-MD5", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Allow", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Expires", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Last-Modified", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsSensitiveClientHeader(string headerName)

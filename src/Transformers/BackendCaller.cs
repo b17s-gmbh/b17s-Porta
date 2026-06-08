@@ -430,6 +430,18 @@ public sealed class BackendCaller(
             // (charset, multipart boundary). The MediaTypeHeaderValue(string) ctor rejects those
             // with a FormatException; Parse accepts the full header value.
             httpRequest.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(contentType);
+
+            // Preserve inbound entity headers the request-headers collection cannot carry
+            // (Content-Encoding, Content-Disposition, Content-Language, Content-Range, ...).
+            // Content-Type is set above; framing headers (Content-Length / Transfer-Encoding)
+            // are deliberately excluded upstream and re-asserted by StreamContent itself.
+            if (request.ContentHeaders != null)
+            {
+                foreach (var (key, value) in request.ContentHeaders)
+                {
+                    httpRequest.Content.Headers.TryAddWithoutValidation(key, value);
+                }
+            }
         }
 
         logger.BackendCallStarting(request.Method, logUrl);
