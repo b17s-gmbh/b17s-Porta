@@ -205,9 +205,10 @@ public class OidcLoginMiddlewareTests
         Assert.Equal("/welcome", fakeAuth.LastChallengeProperties?.RedirectUri);
     }
 
-    // B7 regression: sign-return-url issues a session-bound token. A GET (or
+    // B7 regression: sign-return-url is auth-gated and CSRF-defended. A GET (or
     // any non-POST) carries the auth cookie under SameSite=Lax from a top-level
-    // navigation or image tag, so it must not be reachable that way.
+    // navigation or image tag, so it must not be reachable that way (the token
+    // is not session-bound, so blocking unintended minting matters).
     [Theory]
     [InlineData("GET")]
     [InlineData("HEAD")]

@@ -117,10 +117,15 @@ public sealed class OidcLoginMiddleware(
     /// </summary>
     private async Task HandleSignReturnUrlAsync(HttpContext context)
     {
-        // CSRF defense: this endpoint mints a token bound to the current session
-        // (the authenticated caller's identity). Require POST so that
-        // SameSite=Lax cookies do not attach on a cross-origin top-level GET or
-        // image-tag fetch, and so the request is not safely cacheable.
+        // The token is NOT bound to the caller's identity: by design it is
+        // consumed by the unauthenticated /bff/login request, so there is no
+        // authenticated session to verify at consumption time. Security rests on
+        // (1) requiring auth here, so anonymous attackers cannot mint signed
+        // deep-link tokens, (2) the open-redirect guard at sign time, so the
+        // token only ever vouches for a same-origin / allow-listed destination,
+        // and (3) the short TTL. CSRF defense: require POST so SameSite=Lax
+        // cookies do not attach on a cross-origin top-level GET or image-tag
+        // fetch, and so the request is not safely cacheable.
         if (!HttpMethods.IsPost(context.Request.Method))
         {
             logger.SignReturnUrlMethodNotAllowed(context.Request.Method);
