@@ -592,6 +592,7 @@ public record NamedBackendEndpoint
     /// </summary>
     public static NamedBackendEndpoint WithTokenExchange(string name, string method, string url, string audience)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
         return new NamedBackendEndpoint
         {
             Name = name,
@@ -667,13 +668,17 @@ public sealed class NamedBackendEndpointsBuilder
         => Mutate(e => e with { BackendAuthPolicy = BackendAuthPolicies.BearerToken, ForwardUserToken = true });
 
     /// <summary>Uses token exchange for the most recently added backend, scoped to the given audience.</summary>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="audience"/> is null or blank.</exception>
     public NamedBackendEndpointsBuilder WithTokenExchange(string audience)
-        => Mutate(e => e with
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
+        return Mutate(e => e with
         {
             BackendAuthPolicy = BackendAuthPolicies.TokenExchange,
             UseTokenExchange = true,
             TokenExchangeAudience = audience
         });
+    }
 
     /// <summary>Sets a timeout override on the most recently added backend.</summary>
     public NamedBackendEndpointsBuilder WithTimeout(TimeSpan timeout)
@@ -751,9 +756,11 @@ public sealed class BackendEndpointBuilder
     /// <summary>
     /// Configures token exchange for this backend.
     /// </summary>
-    /// <param name="audience">Target audience for the exchanged token</param>
+    /// <param name="audience">Target audience for the exchanged token. Must be non-empty.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="audience"/> is null or blank.</exception>
     public BackendEndpointBuilder WithTokenExchange(string audience)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
         _authPolicy = BackendAuthPolicies.TokenExchange;
         _useTokenExchange = true;
         _tokenExchangeAudience = audience;
@@ -861,6 +868,7 @@ public static class BackendEndpointExtensions
         this (string Name, string Method, string Url) endpoint,
         string audience)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
         return new NamedBackendEndpoint
         {
             Name = endpoint.Name,

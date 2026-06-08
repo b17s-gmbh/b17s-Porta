@@ -157,6 +157,67 @@ public sealed class BackendAuthE2ETests
     }
 
     [Fact]
+    public async Task TokenExchange_PolicyWithNoAudienceSource_FailsAtStartup()
+    {
+        // Selecting TokenExchange via the string policy (no inline audience) and configuring no
+        // options-level audience used to surface only as a per-request ConfigurationError. Now the
+        // endpoint records into TokenExchangeEndpointRegistry at Build() time and the startup check
+        // refuses to boot. Trusted-host validation runs in Build() before the recording, so the
+        // backend host must be trusted for the recording (and thus the check) to be reached.
+        var startTask = new PortaTestHost()
+            .ConfigureCore(opts => opts.TrustedHosts = [BackendBase])
+            .WithAuthorization()
+            .MapEndpoints(endpoints => endpoints
+                .MapPassThrough<BackendPayload>()
+                .FromGet("/api/orders")
+                .ToBackend("GET", $"{BackendBase}/orders")
+                .WithBackendAuth(BackendAuthPolicies.TokenExchange)
+                .RequireAuth()
+                .Build())
+            .StartAsync();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            using var host = await startTask;
+        });
+        Assert.Contains("no audience source resolves", ex.Message);
+        Assert.Contains("GET /api/orders", ex.Message);
+    }
+
+    [Fact]
+    public async Task TokenExchange_PolicyWithDefaultAudienceConfigured_BootsSuccessfully()
+    {
+        // The same string-policy endpoint boots fine once a default audience is configured: the
+        // startup check finds the audience source the endpoint depends on.
+        using var idp = new FakeIdp();
+        using var backend = new FakeBackend(BackendBase);
+        backend.MapGet("/orders", WriteOk);
+
+        using var bff = await new PortaTestHost()
+            .WithFakeIdp(idp)
+            .WithBackend(backend)
+            .WithAuthorization()
+            .ConfigureServices(services => services.Configure<BackendServiceOptions>(
+                options => options.DefaultTokenExchangeAudience = "orders-api"))
+            .MapEndpoints(endpoints => endpoints
+                .MapPassThrough<BackendPayload>()
+                .FromGet("/api/orders")
+                .ToBackend("GET", $"{BackendBase}/orders")
+                .WithBackendAuth(BackendAuthPolicies.TokenExchange)
+                .RequireAuth()
+                .Build())
+            .StartAsync();
+
+        var client = await bff.LoginAsync(idp, TestContext.Current.CancellationToken);
+        var response = await client.GetAsync("/api/orders", TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var recorded = Assert.Single(backend.ReceivedRequests);
+        var jwt = new JwtSecurityTokenHandler().ReadJwtToken(AssertBearer(recorded.Authorization));
+        Assert.Contains("orders-api", jwt.Audiences);
+    }
+
+    [Fact]
     public async Task BasicAuth_ForwardsBasicCredentials()
     {
         // Config-provided Basic credentials must appear as `Authorization: Basic base64(user:pass)`.

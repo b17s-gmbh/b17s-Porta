@@ -594,7 +594,11 @@ public sealed class BackendCallerGraphQLAndRawTests
     [Fact]
     public async Task Call_EmitsSingleBackendSpan_WithSanitizedUrlAndRefreshRetryFalse()
     {
-        var stopped = new List<Activity>();
+        // The Porta ActivitySource is process-global: ActivityStopped can fire concurrently for spans
+        // emitted by other tests (a List.Add would corrupt under that race, and an unfiltered
+        // Assert.Single would count their spans). Collect into a thread-safe bag and scope the
+        // assertion to this test's own backend call via its unique sanitized URL.
+        var stopped = new System.Collections.Concurrent.ConcurrentBag<Activity>();
         using var listener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == PortaActivitySource.Source.Name,
@@ -609,7 +613,8 @@ public sealed class BackendCallerGraphQLAndRawTests
         var request = new BackendRequest { Method = "GET", Url = "https://backend.test/users?token=secret" };
         await caller.CallAsync<Product>(request, TestContext.Current.CancellationToken);
 
-        var span = Assert.Single(stopped);
+        var span = Assert.Single(stopped, s =>
+            (s.GetTagItem(PortaActivitySource.Tags.HttpUrl)?.ToString() ?? "").Contains("backend.test/users"));
         Assert.Equal(ActivityStatusCode.Ok, span.Status);
         Assert.Equal(false, span.GetTagItem("bff.backend.refresh_retry"));
         var taggedUrl = span.GetTagItem(PortaActivitySource.Tags.HttpUrl)?.ToString() ?? "";

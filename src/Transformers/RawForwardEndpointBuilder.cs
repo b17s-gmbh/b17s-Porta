@@ -151,6 +151,22 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
             _services.GetService<ITrustedHostValidator>()?.ValidateUrl(_backendUrl, _routePattern!);
         }
 
+        // Raw-forward has no inline-audience option: a TokenExchange policy here can only be satisfied
+        // by an options-level default audience. Fail fast at Build() when none is configured, rather
+        // than letting it surface as a per-request ConfigurationError.
+        if (string.Equals(_backendAuthPolicy, BackendAuthPolicies.TokenExchange, StringComparison.Ordinal))
+        {
+            var backendOptions = _services.GetService<IOptions<BackendServiceOptions>>()?.Value;
+            if (string.IsNullOrEmpty(backendOptions?.DefaultTokenExchangeAudience))
+            {
+                throw new InvalidOperationException(
+                    $"Porta: raw-forward endpoint '{_httpMethod} {_routePattern}' selects the TokenExchange " +
+                    "backend-auth policy, which has no inline audience, and no " +
+                    "BackendServiceOptions.DefaultTokenExchangeAudience is configured. Configure a default " +
+                    "audience, or use a transformer/pass-through endpoint with WithTokenExchange(audience).");
+            }
+        }
+
         // Capture values for closure
         var backendMethod = _backendMethod;
         var backendUrl = _backendUrl;

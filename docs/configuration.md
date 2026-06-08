@@ -220,7 +220,7 @@ The `"BackendService"` section is bound automatically by the `AddPortaCore(IConf
 | `DefaultTokenExchangeAudience` | Fallback audience for `BackendAuthPolicies.TokenExchange` when an endpoint doesn't supply one inline via `WithTokenExchange(audience)`. |
 | `TokenExchangeAudiences` | Per-backend token-exchange audience override, keyed by `BackendRequest.BackendName`. |
 
-When `BackendAuthPolicies.TokenExchange` is selected without an audience source (inline, default, or per-backend), the request resolves into a `401` backend-auth error at request time - there is no startup-time check for this.
+When `BackendAuthPolicies.TokenExchange` is selected without an audience source (inline, default, or per-backend), Porta **fails fast at startup** for any endpoint mapped before the host starts. For cases the startup check can't see statically (e.g. a backend name rewritten at request time via `ModifyRequest`), the runtime backstop surfaces it as a server-side **configuration error (500-class)** - a missing audience is operator misconfiguration, not a user `401` credential rejection.
 
 **What it registers:**
 - ASP.NET Core `AddCookie()` + `AddOpenIdConnect()` - framework owns state/nonce/PKCE/code-exchange/id_token validation.

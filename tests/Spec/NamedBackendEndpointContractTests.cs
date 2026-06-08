@@ -77,6 +77,28 @@ public class NamedBackendEndpointContractTests
         Assert.Equal("api://downstream", ep.TokenExchangeAudience);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void WithTokenExchange_BlankAudience_ThrowsAtConfigurationTime(string audience)
+    {
+        // Fail fast: a blank inline audience can only ever produce a request-time configuration
+        // error, so reject it where the consumer actually wrote it.
+        Assert.Throws<ArgumentException>(() => Tuple().WithTokenExchange(audience));
+        Assert.Throws<ArgumentException>(() =>
+            NamedBackendEndpoint.WithTokenExchange("orders", "GET", "https://api.example/orders", audience));
+        Assert.Throws<ArgumentException>(() =>
+            BackendEndpointBuilder.Create("orders", "GET", "https://api.example/orders").WithTokenExchange(audience));
+        Assert.Throws<ArgumentException>(() =>
+            new NamedBackendEndpointsBuilder().ToGet("orders", "https://api.example/orders").WithTokenExchange(audience));
+    }
+
+    [Fact]
+    public void WithTokenExchange_NullAudience_Throws()
+    {
+        Assert.Throws<ArgumentNullException>(() => Tuple().WithTokenExchange(null!));
+    }
+
     [Fact]
     public void WithTimeout_SetsTimeout()
     {

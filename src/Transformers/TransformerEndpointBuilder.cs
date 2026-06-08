@@ -141,8 +141,11 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
     }
 
     /// <summary>Uses token exchange to get a backend-specific token.</summary>
+    /// <param name="audience">Target audience for the exchanged token. Must be non-empty.</param>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="audience"/> is null or blank.</exception>
     public TBuilder WithTokenExchange(string audience)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(audience);
         _useTokenExchange = true;
         _tokenExchangeAudience = audience;
         return Self;
@@ -214,6 +217,58 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
         }
     }
 
+    // Fail fast at Build() (the same place trusted-host validation runs) when an endpoint selects the
+    // TokenExchange policy without an inline audience and no options-level audience resolves for it -
+    // rather than letting it surface as a per-request ConfigurationError. Validating here is
+    // order-independent across hosting models: in the WebApplication model Build() runs before the host
+    // starts; in the UseEndpoints model it runs while the pipeline is built. The request-time guard in
+    // the token-exchange handler remains the backstop for backend names only known at request time.
+    private void ValidateTokenExchangeAudienceResolvable()
+    {
+        var options = _services.GetService<IOptions<BackendServiceOptions>>()?.Value ?? new BackendServiceOptions();
+        var endpointLabel = $"{_httpMethod} {_routePattern}";
+
+        // Single-backend config carries no backend name, so only the global default audience can satisfy it.
+        var singleBackendSelectsTokenExchange =
+            _useTokenExchange
+            || string.Equals(_backendAuthPolicy, BackendAuthPolicies.TokenExchange, StringComparison.Ordinal);
+        if (singleBackendSelectsTokenExchange
+            && string.IsNullOrEmpty(_tokenExchangeAudience)
+            && string.IsNullOrEmpty(options.DefaultTokenExchangeAudience))
+        {
+            throw TokenExchangeAudienceMissing(endpointLabel);
+        }
+
+        // Named backends each carry their own name for per-backend audience lookup.
+        foreach (var name in _namedBackends.Names)
+        {
+            if (!_namedBackends.TryGet(name, out var endpoint) || endpoint is null)
+            {
+                continue;
+            }
+
+            var selectsTokenExchange =
+                endpoint.UseTokenExchange
+                || string.Equals(endpoint.BackendAuthPolicy, BackendAuthPolicies.TokenExchange, StringComparison.Ordinal);
+            var audienceResolves =
+                !string.IsNullOrEmpty(endpoint.TokenExchangeAudience)
+                || options.TokenExchangeAudiences.ContainsKey(endpoint.Name)
+                || !string.IsNullOrEmpty(options.DefaultTokenExchangeAudience);
+            if (selectsTokenExchange && !audienceResolves)
+            {
+                throw TokenExchangeAudienceMissing($"{endpointLabel} (backend '{endpoint.Name}')");
+            }
+        }
+    }
+
+    private static InvalidOperationException TokenExchangeAudienceMissing(string endpointDescription)
+        => new(
+            $"Porta: endpoint '{endpointDescription}' selects the TokenExchange backend-auth policy " +
+            "without an inline audience, and no audience source resolves for it. Supply an audience " +
+            "inline via WithTokenExchange(audience), or configure " +
+            "BackendServiceOptions.DefaultTokenExchangeAudience or " +
+            "BackendServiceOptions.TokenExchangeAudiences[backendName].");
+
     /// <summary>Builds and registers the endpoint.</summary>
     public RouteHandlerBuilder Build()
     {
@@ -245,6 +300,7 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
 
         ValidateAuthorizationRequirements();
         ValidateTrustedHostsForUserTokenForwarding();
+        ValidateTokenExchangeAudienceResolvable();
 
         // Capture values for closure
         var namedBackends = _namedBackends;

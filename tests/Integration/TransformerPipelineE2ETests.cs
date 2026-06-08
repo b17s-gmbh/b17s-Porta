@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Net.Mime;
 
+using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
 using b17s.Porta.Transformers;
 
@@ -499,6 +500,81 @@ public sealed class TransformerPipelineE2ETests
             using var host = await startTask;
         });
         Assert.Contains("not in the trusted hosts list", ex.Message);
+    }
+
+    [Fact]
+    public async Task NamedBackend_TokenExchangeWithNoAudience_FailsAtStartup()
+    {
+        // A named backend that selects TokenExchange (by policy, no inline audience) with no
+        // per-backend or default audience configured must fail fast at startup, naming the backend -
+        // not surface as a per-request ConfigurationError. The backend host is trusted so the
+        // earlier user-token trusted-host gate passes and the audience check is what fires.
+        var startTask = new PortaTestHost()
+            .ConfigureCore(opts => opts.TrustedHosts = [BackendBase])
+            .WithAuthorization()
+            .ConfigureServices(services => services.AddTransformer<TwoBackendAggregator>())
+            .MapEndpoints(endpoints => endpoints
+                .MapTransformer<TwoBackendAggregator, EnrichedProfile>()
+                .FromGet("/api/profile")
+                .ToBackends(
+                    ("UserInfo", "GET", $"{BackendBase}/userinfo").WithAuth(BackendAuthPolicies.TokenExchange),
+                    NamedBackendEndpoint.FromTuple("ProductInfo", "GET", $"{BackendBase}/productinfo"))
+                .RequireAuth()
+                .Build())
+            .StartAsync();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            using var host = await startTask;
+        });
+        Assert.Contains("no audience source resolves", ex.Message);
+        Assert.Contains("UserInfo", ex.Message);
+    }
+
+    [Fact]
+    public async Task NamedBackend_TokenExchangeWithPerBackendAudience_BootsSuccessfully()
+    {
+        // The same named-backend endpoint boots once a per-backend audience is configured for it:
+        // the per-backend ContainsKey lookup must satisfy the check. A stub IApiTokenService clears
+        // the unrelated "audiences configured but IApiTokenService missing" startup check so this
+        // test isolates the audience-resolution branch.
+        using var host = await new PortaTestHost()
+            .ConfigureCore(opts => opts.TrustedHosts = [BackendBase])
+            .WithAuthorization()
+            .ConfigureServices(services =>
+            {
+                services.AddTransformer<TwoBackendAggregator>();
+                services.AddSingleton<IApiTokenService, StubApiTokenService>();
+                services.Configure<BackendServiceOptions>(
+                    options => options.TokenExchangeAudiences["UserInfo"] = "user-api");
+            })
+            .MapEndpoints(endpoints => endpoints
+                .MapTransformer<TwoBackendAggregator, EnrichedProfile>()
+                .FromGet("/api/profile")
+                .ToBackends(
+                    ("UserInfo", "GET", $"{BackendBase}/userinfo").WithAuth(BackendAuthPolicies.TokenExchange),
+                    NamedBackendEndpoint.FromTuple("ProductInfo", "GET", $"{BackendBase}/productinfo"))
+                .RequireAuth()
+                .Build())
+            .StartAsync();
+
+        // Booting without throwing is the assertion; the endpoint is wired and the host is live.
+        Assert.NotNull(host.Services);
+    }
+
+    private sealed class StubApiTokenService : IApiTokenService
+    {
+        public Task<string?> GetApiTokenAsync(HttpContext context, ApiConfiguration apiConfig, string? accessToken, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(null);
+
+        public Task<string?> GetApiTokenAsync(HttpContext context, ApiConfiguration apiConfig, string? accessToken, ApiTokenCacheOptions cacheOptions, CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>(null);
+
+        public Task InvalidateApiTokensAsync(HttpContext context, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task InvalidateApiTokensAsync(HttpContext context, ApiTokenCacheOptions cacheOptions, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 
     // -----------------------------
