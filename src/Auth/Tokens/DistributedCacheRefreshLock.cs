@@ -19,9 +19,11 @@ namespace b17s.Porta.Auth.Tokens;
 /// fencing token. Under contention the loser usually observes the winner's
 /// token on the verify step and reports the lock as not acquired - but a small
 /// race window between the read and the write remains where both replicas can
-/// proceed. Release performs a compare-and-delete (read token, delete only if
-/// it still matches) so a delayed disposer can never evict the next holder's
-/// lock.
+/// proceed. Release is a best-effort compare-and-delete (read token, delete only
+/// if it still matches) which narrows - but does not eliminate - the window in
+/// which a delayed disposer evicts the next holder's lock: <see cref="IDistributedCache"/>
+/// exposes no atomic check-and-delete, so the entry can expire and be re-acquired
+/// by another replica between this read and the delete.
 /// </para>
 ///
 /// <para>
