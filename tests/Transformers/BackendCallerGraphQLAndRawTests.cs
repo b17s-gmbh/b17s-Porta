@@ -19,6 +19,7 @@ namespace b17s.Porta.Tests.Transformers;
 /// the body-stream raw variant, the bounded response reader (DoS guard), and the failure paths in
 /// <c>SendRawRequestAsync</c> (timeout, network failure, auth-handler failure, generic).
 /// </summary>
+[Collection(PortaActivitySourceCollection.Name)]
 public sealed class BackendCallerGraphQLAndRawTests
 {
     // ===========================================================================

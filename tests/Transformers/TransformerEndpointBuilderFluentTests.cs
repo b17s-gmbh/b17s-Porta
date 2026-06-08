@@ -29,6 +29,7 @@ namespace b17s.Porta.Tests.Transformers;
 /// private fields and surface only through the BackendRequest the handler builds at call time,
 /// so this is the only meaningful way to assert they wire up correctly without breaking encapsulation.
 /// </summary>
+[Collection(PortaActivitySourceCollection.Name)]
 public sealed class TransformerEndpointBuilderFluentTests
 {
     [Fact]

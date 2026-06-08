@@ -165,6 +165,8 @@ app.MapRawForward<SecureFileTransformer>()
 | `ModifyRequest()` | Add headers, modify URL before sending |
 | `ModifyResponseHeaders()` | Strip/add headers before returning |
 
+`ModifyRequest()` may rewrite `request.RequestUri` to redirect the backend call (e.g. routing to a different upstream per tenant). The rewritten URL is what is actually sent. Two safeguards still apply to the final URL: when the endpoint forwards the user's identity (`WithBackendAuth(BearerToken | TokenExchange)`), the rewritten host is re-validated against `PortaCore:TrustedHosts` before the token is attached - a rewrite to an untrusted host fails closed. And if the rewrite changes the destination *host*, sensitive client headers that were allow-listed via `AllowForwardingHeaders(...)` for the original host are re-scoped and stripped if the new host is not allow-listed for them.
+
 ## Header Forwarding & Sensitive Header Stripping
 
 To prevent leaking the BFF's session cookie or client credentials to backends, raw forwarding strips the following headers from the outbound request by default:

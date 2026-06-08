@@ -326,13 +326,41 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 // Let transformer modify request
                 transformer.ModifyRequest(tempRequest, transformerContext);
 
-                // Update backend request headers from modified temp request
+                // Honour a URL rewrite performed in ModifyRequest. The hook is documented to allow
+                // "modify the URL" (see IRawTransformer.ModifyRequest), but the rewritten RequestUri
+                // used to be discarded - the backend was always called with the originally interpolated
+                // URL. Read it back so custom transformers can actually redirect the backend call.
+                // A null RequestUri (transformer cleared it) falls back to the interpolated URL.
+                var finalUrl = tempRequest.RequestUri?.ToString() ?? interpolatedUrl;
+
+                // If the transformer redirected the call to a DIFFERENT host, the sensitive client
+                // headers copied above were allow-listed against the ORIGINAL destination host. A
+                // rewrite must not be allowed to smuggle the client's Authorization/Cookie/etc. to a
+                // host the operator never allow-listed for those headers, so re-scope the client
+                // headers against the final host and strip any that are no longer permitted. Headers
+                // the transformer set itself are trusted server-side intent; we only re-evaluate
+                // headers that were forwarded from the incoming client request.
+                // (User-token forwarding is independently re-validated against the final URL in
+                // BackendCaller's trusted-host gate, so a rewrite cannot leak the OAuth token either.)
+                string? finalHost = Uri.TryCreate(finalUrl, UriKind.Absolute, out var finalUri) ? finalUri.Host : null;
+                if (!string.Equals(finalHost, destinationHost, StringComparison.OrdinalIgnoreCase))
+                {
+                    foreach (var (key, _) in transformerContext.RequestHeaders)
+                    {
+                        if (tempRequest.Headers.Contains(key) && !ShouldForwardClientHeader(key, finalHost, headerPassThrough))
+                        {
+                            tempRequest.Headers.Remove(key);
+                        }
+                    }
+                }
+
+                // Update backend request URL + headers from the modified temp request
                 var customHeaders = new Dictionary<string, string>();
                 foreach (var header in tempRequest.Headers)
                 {
                     customHeaders[header.Key] = string.Join(",", header.Value);
                 }
-                backendRequest = backendRequest with { Headers = customHeaders };
+                backendRequest = backendRequest with { Url = finalUrl, Headers = customHeaders };
 
                 // Call backend
                 if (requestBody != null && contentType != null)
