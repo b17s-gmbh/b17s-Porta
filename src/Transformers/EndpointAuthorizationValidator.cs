@@ -56,22 +56,8 @@ internal static class EndpointAuthorizationValidator
             }
         }
 
-        var backendsRequiringIdentity = new List<string>();
-
-        if (transformerType?.IsDefined(typeof(RequiresAuthenticationAttribute), inherit: true) == true)
-        {
-            backendsRequiringIdentity.Add($"transformer {transformerType.Name} ([RequiresAuthentication])");
-        }
-
-        if (BackendAuthPolicies.RequiresUserIdentity(backendAuthPolicy))
-        {
-            backendsRequiringIdentity.Add($"ToBackend (policy: {backendAuthPolicy})");
-        }
-
-        if (useTokenExchange)
-        {
-            backendsRequiringIdentity.Add($"ToBackend (token exchange: {tokenExchangeAudience})");
-        }
+        var backendsRequiringIdentity = CollectIdentitySources(
+            transformerType, backendAuthPolicy, useTokenExchange, tokenExchangeAudience);
 
         foreach (var name in namedBackends.Names)
         {
@@ -86,6 +72,58 @@ internal static class EndpointAuthorizationValidator
             }
         }
 
+        ThrowIfAnonymous(routePattern, backendsRequiringIdentity, effectiveRequireAuth);
+    }
+
+    /// <summary>
+    /// Single-backend variant of <see cref="Validate"/> for builders that carry one
+    /// backend policy and a require-auth flag (raw forwarding). Throws when a policy
+    /// that forwards the user's identity is combined with anonymous access - otherwise
+    /// the request-time auth gate is skipped while the user-token-dependent policy stays
+    /// attached, diverging from typed endpoints.
+    /// </summary>
+    public static void ValidateSingleBackend(
+        string? routePattern,
+        string? backendAuthPolicy,
+        bool effectiveRequireAuth,
+        Type? transformerType = null)
+    {
+        var backendsRequiringIdentity = CollectIdentitySources(
+            transformerType, backendAuthPolicy, useTokenExchange: false, tokenExchangeAudience: null);
+        ThrowIfAnonymous(routePattern, backendsRequiringIdentity, effectiveRequireAuth);
+    }
+
+    private static List<string> CollectIdentitySources(
+        Type? transformerType,
+        string? backendAuthPolicy,
+        bool useTokenExchange,
+        string? tokenExchangeAudience)
+    {
+        var sources = new List<string>();
+
+        if (transformerType?.IsDefined(typeof(RequiresAuthenticationAttribute), inherit: true) == true)
+        {
+            sources.Add($"transformer {transformerType.Name} ([RequiresAuthentication])");
+        }
+
+        if (BackendAuthPolicies.RequiresUserIdentity(backendAuthPolicy))
+        {
+            sources.Add($"ToBackend (policy: {backendAuthPolicy})");
+        }
+
+        if (useTokenExchange)
+        {
+            sources.Add($"ToBackend (token exchange: {tokenExchangeAudience})");
+        }
+
+        return sources;
+    }
+
+    private static void ThrowIfAnonymous(
+        string? routePattern,
+        List<string> backendsRequiringIdentity,
+        bool effectiveRequireAuth)
+    {
         if (backendsRequiringIdentity.Count > 0 && !effectiveRequireAuth)
         {
             throw new InvalidOperationException(

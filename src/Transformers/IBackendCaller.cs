@@ -552,6 +552,7 @@ public record NamedBackendEndpoint
             Method = Method,
             Url = url,
             AccessToken = accessToken,
+            BackendName = Name,
             UseTokenExchange = UseTokenExchange,
             TokenExchangeAudience = TokenExchangeAudience,
             Timeout = Timeout,

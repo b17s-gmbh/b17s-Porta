@@ -69,6 +69,60 @@ public class RawForwardEndpointBuilderTests
         Assert.Null(ex);
     }
 
+    [Fact]
+    public void Build_AnonymousWithUserIdentityBackendAuth_Throws()
+    {
+        // Mirrors the typed endpoint builder: combining AllowAnonymous() with a backend
+        // policy that forwards the user's identity is a configuration mistake. At runtime
+        // the auth gate would be skipped while the user-token-dependent policy stays attached.
+        var (_, builder) = CreateBuilderFor<DefaultRawForwardTransformer>(
+            new PortaCoreOptions { RequireAuthorizationByDefault = false });
+
+        builder
+            .FromRoute("GET", "/api/things")
+            .ToBackend("GET", "https://backend.example.com/things")
+            .WithBackendAuth(BackendAuthPolicies.BearerToken)
+            .AllowAnonymous();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => builder.Build());
+        Assert.Contains("requires user identity", ex.Message);
+        Assert.Contains(BackendAuthPolicies.BearerToken, ex.Message);
+    }
+
+    [Fact]
+    public void Build_RequireAuthWithUserIdentityBackendAuth_DoesNotThrow()
+    {
+        var (_, builder) = CreateBuilderFor<DefaultRawForwardTransformer>(
+            new PortaCoreOptions { RequireAuthorizationByDefault = false });
+
+        builder
+            .FromRoute("GET", "/api/things")
+            .ToBackend("GET", "https://backend.example.com/things")
+            .WithBackendAuth(BackendAuthPolicies.BearerToken)
+            .RequireAuth();
+
+        var ex = Record.Exception(() => builder.Build());
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Build_AnonymousWithNonIdentityBackendAuth_DoesNotThrow()
+    {
+        // A backend policy that does NOT depend on user identity (e.g. None) is a
+        // legitimate anonymous public route - the new check must not over-block it.
+        var (_, builder) = CreateBuilderFor<DefaultRawForwardTransformer>(
+            new PortaCoreOptions { RequireAuthorizationByDefault = false });
+
+        builder
+            .FromRoute("GET", "/api/public")
+            .ToBackend("GET", "https://backend.example.com/public")
+            .WithBackendAuth(BackendAuthPolicies.None)
+            .AllowAnonymous();
+
+        var ex = Record.Exception(() => builder.Build());
+        Assert.Null(ex);
+    }
+
     [Theory]
     [InlineData("GET")]
     [InlineData("POST")]

@@ -172,6 +172,16 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
             ?? (transformerRequiresAuthAtBuild || _options.RequireAuthorizationByDefault);
         var authPolicyName = _authPolicy;
 
+        // A backend policy that forwards the user's identity must not be paired with anonymous
+        // access: enforceUserIdentity would be false, skipping the auth gate below while the
+        // user-token-dependent backend policy stays attached. Catch this at startup the same way
+        // the typed endpoint builder does (EndpointAuthorizationValidator.Validate).
+        EndpointAuthorizationValidator.ValidateSingleBackend(
+            _routePattern,
+            _backendAuthPolicy,
+            enforceUserIdentity,
+            typeof(TTransformer));
+
         var handler = async (HttpContext context) =>
         {
             if (enforceUserIdentity)
