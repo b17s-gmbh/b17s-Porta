@@ -183,6 +183,56 @@ public sealed class AggregatingTransformerTests
     }
 
     [Fact]
+    public async Task TransformAsync_WithRouteValuesFactory_InterpolatesBackendUrlFromFactoryValues()
+    {
+        // A backend configured via .WithRouteValues() must have the factory's values
+        // interpolated into its URL template. Before the fix the factory was stored but
+        // never read, so the call hit the un-interpolated template.
+        var backend = new MockBackendCaller()
+            .SetupResponse("http://user-service/users/u42", new UserInfo { Id = "u42", Name = "ada" });
+
+        var namedBackends = TestFixtures.CreateNamedBackends(
+            ("UserInfo", "GET", "http://user-service/users/{userId}", null));
+
+        var context = TestFixtures.CreateTransformerContextWithNamedBackends(
+            namedBackends,
+            backendCaller: backend,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var sut = new RouteValuesAggregator();
+        var result = await sut.TransformAsync(context);
+
+        Assert.NotNull(backend.LastCall);
+        Assert.Equal("http://user-service/users/u42", backend.LastCall!.Request.Url);
+        Assert.Equal("ada", result.Name);
+    }
+
+    [Fact]
+    public async Task TransformAsync_WithRouteValuesFactory_AmbientRouteValuesWinOnCollision()
+    {
+        // Merge semantics match MultiBackendCalls.CallNamedBackendAsync: on a key collision the
+        // ambient route value wins; the factory only fills keys the request didn't provide. The
+        // factory supplies userId="u42", but the ambient userId="ambient-wins" must be kept.
+        var backend = new MockBackendCaller()
+            .SetupResponse("http://user-service/users/ambient-wins", new UserInfo { Id = "ambient-wins" });
+
+        var namedBackends = TestFixtures.CreateNamedBackends(
+            ("UserInfo", "GET", "http://user-service/users/{userId}", null));
+
+        var context = TestFixtures.CreateTransformerContextWithNamedBackends(
+            namedBackends,
+            backendCaller: backend,
+            routeValues: new Dictionary<string, object?> { ["userId"] = "ambient-wins" },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var sut = new RouteValuesAggregator();
+        await sut.TransformAsync(context);
+
+        Assert.NotNull(backend.LastCall);
+        Assert.Equal("http://user-service/users/ambient-wins", backend.LastCall!.Request.Url);
+    }
+
+    [Fact]
     public async Task TransformAsync_BuilderCachedAcrossCalls_ConfigureRunsOnce()
     {
         // GetOrCreateBuilder caches the builder so Configure() doesn't re-run on
@@ -387,6 +437,18 @@ public sealed class AggregatingTransformerTests
         {
             builder.Backend<UserInfo>("UserInfo")
                 .WithBody(ctx => new UserLookup { UserId = ctx.UserId! });
+        }
+
+        protected override UserInfo MapResults(AggregatorResults results, TransformerContext context)
+            => results.Get<UserInfo>("UserInfo") ?? new UserInfo();
+    }
+
+    private sealed class RouteValuesAggregator : AggregatingTransformer<UserInfo>
+    {
+        protected override void Configure(AggregatorBuilder builder)
+        {
+            builder.Backend<UserInfo>("UserInfo")
+                .WithRouteValues(_ => new Dictionary<string, object?> { ["userId"] = "u42" });
         }
 
         protected override UserInfo MapResults(AggregatorResults results, TransformerContext context)

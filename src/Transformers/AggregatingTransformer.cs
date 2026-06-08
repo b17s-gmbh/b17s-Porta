@@ -142,7 +142,18 @@ public abstract class AggregatingTransformer<TResponse> : MultiBackendTransforme
         var namedBackends = GetNamedBackends(context);
         var endpoint = namedBackends.Get(config.Name);
 
-        var backendRequest = endpoint.ToBackendRequest(context.RouteValues, context.AuthContext.AccessToken);
+        // A per-backend WithRouteValues() factory supplies additional interpolation values for
+        // this call. Merge them with the ambient context.RouteValues, matching the merge in
+        // MultiBackendCalls.CallNamedBackendAsync: ambient values win on a key collision, the
+        // factory only fills in keys the request didn't already provide.
+        var additionalRouteValues = config.RouteValuesFactory?.Invoke(context);
+        var routeValues = additionalRouteValues != null
+            ? context.RouteValues
+                .Concat(additionalRouteValues.Where(kv => !context.RouteValues.ContainsKey(kv.Key)))
+                .ToDictionary(kv => kv.Key, kv => kv.Value)
+            : context.RouteValues;
+
+        var backendRequest = endpoint.ToBackendRequest(routeValues, context.AuthContext.AccessToken);
 
         // Return the raw result (success flag + value) so the caller can tell an unsuccessful
         // backend response (Failed) apart from a successful-but-empty payload (ReturnedNull).
@@ -200,8 +211,17 @@ public sealed class BackendCallBuilder<TResponse>
     }
 
     /// <summary>
-    /// Add additional route values for URL interpolation.
+    /// Supply additional per-backend route values for URL interpolation. The factory is invoked
+    /// with the <see cref="TransformerContext"/> when the backend call is made, and its values are
+    /// merged with the request's ambient route values. On a key collision the ambient value wins -
+    /// the factory only fills in keys the request didn't already provide, matching the merge
+    /// semantics of the other multi-backend call paths.
     /// </summary>
+    /// <param name="routeValuesFactory">
+    /// Produces additional route values to interpolate into this backend's URL template. Return an
+    /// empty dictionary to use only the ambient route values.
+    /// </param>
+    /// <returns>The builder, for chaining.</returns>
     public BackendCallBuilder<TResponse> WithRouteValues(Func<TransformerContext, IReadOnlyDictionary<string, object?>> routeValuesFactory)
     {
         _config.RouteValuesFactory = routeValuesFactory;
