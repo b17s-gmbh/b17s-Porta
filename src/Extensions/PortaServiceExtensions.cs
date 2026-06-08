@@ -13,6 +13,8 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Http.Resilience;
+using Microsoft.Extensions.Options;
 
 namespace b17s.Porta.Extensions;
 
@@ -76,13 +78,6 @@ public static class PortaServiceExtensions
             services.AddOptions<PortaCoreOptions>();
         }
 
-        // Materialize a snapshot for startup-time wiring below. Mutations to options
-        // after this point still flow through IOptions<PortaCoreOptions> for runtime
-        // consumers, but registrations captured by HttpClient/resilience must use
-        // values fixed at registration.
-        var coreOptions = new PortaCoreOptions();
-        configureOptions?.Invoke(coreOptions);
-
         // Register HttpContextAccessor (required for token forwarding)
         services.AddHttpContextAccessor();
 
@@ -116,9 +111,12 @@ public static class PortaServiceExtensions
             return new CompositeAuthenticationProvider(providers, logger);
         });
 
-        // Register HttpClient without retries (default)
-        services.AddHttpClient(BackendCaller.HttpClientName, client =>
+        // Register HttpClient without retries (default). Timeout binds from the composed
+        // IOptions<PortaCoreOptions> pipeline (read at client-creation time) rather than an
+        // eager snapshot, so consumer Configure/PostConfigure<PortaCoreOptions> is honored.
+        services.AddHttpClient(BackendCaller.HttpClientName, (sp, client) =>
         {
+            var coreOptions = sp.GetRequiredService<IOptions<PortaCoreOptions>>().Value;
             client.Timeout = coreOptions.DefaultTimeout;
             client.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
@@ -133,9 +131,12 @@ public static class PortaServiceExtensions
             AllowAutoRedirect = false,
         });
 
-        // Register HttpClient with retries (used when EnableRetries = true)
-        services.AddHttpClient(BackendCaller.HttpClientNameWithRetries, client =>
+        // Register HttpClient with retries (used when EnableRetries = true). Both the client
+        // timeout and the resilience policy bind from the composed IOptions<PortaCoreOptions>
+        // pipeline rather than an eager snapshot, so consumer Configure/PostConfigure is honored.
+        services.AddHttpClient(BackendCaller.HttpClientNameWithRetries, (sp, client) =>
         {
+            var coreOptions = sp.GetRequiredService<IOptions<PortaCoreOptions>>().Value;
             client.Timeout = coreOptions.DefaultTimeout;
             client.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
@@ -144,8 +145,10 @@ public static class PortaServiceExtensions
         {
             AllowAutoRedirect = false,
         })
-        .AddStandardResilienceHandler(resilience =>
+        .AddStandardResilienceHandler()
+        .Configure((resilience, sp) =>
         {
+            var coreOptions = sp.GetRequiredService<IOptions<PortaCoreOptions>>().Value;
             resilience.AttemptTimeout.Timeout = coreOptions.DefaultTimeout;
             resilience.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(coreOptions.DefaultTimeout.TotalSeconds * 2);
             resilience.Retry.MaxRetryAttempts = coreOptions.MaxRetryAttempts;

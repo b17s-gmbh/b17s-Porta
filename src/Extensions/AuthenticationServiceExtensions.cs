@@ -10,6 +10,7 @@ using b17s.Porta.Services;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Configuration;
@@ -57,10 +58,7 @@ public static class AuthenticationServiceExtensions
     {
         services.Configure<SessionAuthenticationConfiguration>(configuration.GetSection(configSectionName));
 
-        var config = new SessionAuthenticationConfiguration();
-        configuration.GetSection(configSectionName).Bind(config);
-
-        return services.AddPortaAuthenticationCore(config);
+        return services.AddPortaAuthenticationCore();
     }
 
     /// <summary>
@@ -70,8 +68,10 @@ public static class AuthenticationServiceExtensions
     /// <c>services.Configure&lt;SessionAuthenticationConfiguration&gt;(...)</c> elsewhere).
     /// </summary>
     /// <remarks>
-    /// Single source of truth: every consumer resolves <c>IOptions&lt;SessionAuthenticationConfiguration&gt;</c>.
-    /// No singleton instance is registered.
+    /// Single source of truth: every consumer - including the cookie/OIDC handlers and the
+    /// token <see cref="HttpClient"/> - resolves <c>IOptions&lt;SessionAuthenticationConfiguration&gt;</c>.
+    /// No registration-time snapshot is captured, so external
+    /// <c>Configure&lt;T&gt;</c>/<c>PostConfigure&lt;T&gt;</c> composition is honored everywhere.
     /// </remarks>
     public static IServiceCollection AddPortaAuthentication(
         this IServiceCollection services,
@@ -82,22 +82,19 @@ public static class AuthenticationServiceExtensions
             services.Configure(configureOptions);
         }
 
-        var config = new SessionAuthenticationConfiguration();
-        configureOptions?.Invoke(config);
-
-        return services.AddPortaAuthenticationCore(config);
+        return services.AddPortaAuthenticationCore();
     }
 
     /// <summary>
     /// Shared registration body for both <see cref="AddPortaAuthentication(IServiceCollection, IConfiguration, string)"/>
     /// and <see cref="AddPortaAuthentication(IServiceCollection, Action{SessionAuthenticationConfiguration}?)"/>.
-    /// The <paramref name="config"/> snapshot drives startup-time wiring (cookie names,
-    /// OIDC scheme options, resilience timeouts) that the framework itself captures
-    /// at registration. Runtime-mutable consumers must take <c>IOptions&lt;T&gt;</c>.
+    /// All startup-time wiring (cookie names, OIDC scheme options, resilience timeouts) binds
+    /// lazily from the composed <c>IOptions&lt;SessionAuthenticationConfiguration&gt;</c> pipeline
+    /// rather than an eager snapshot, so it reflects every <c>Configure</c>/<c>PostConfigure</c>
+    /// the consumer registered, in any order.
     /// </summary>
     private static IServiceCollection AddPortaAuthenticationCore(
-        this IServiceCollection services,
-        SessionAuthenticationConfiguration config)
+        this IServiceCollection services)
     {
         // Validate options up-front so a misconfigured BFF fails at boot rather than
         // on the first OIDC redirect. ValidateOnStart promotes validation from
@@ -112,10 +109,10 @@ public static class AuthenticationServiceExtensions
                 SessionAuthenticationConfigurationValidator>());
         services.AddOptions<SessionAuthenticationConfiguration>().ValidateOnStart();
 
-        AddInfrastructure(services, config);
-        AddCookieAndOidcAuthentication(services, config);
+        AddInfrastructure(services);
+        AddCookieAndOidcAuthentication(services);
         services.AddAuthenticationCore();
-        services.AddTokenServices(config);
+        services.AddTokenServices();
         services.AddSessionManagement();
         services.AddOidcEndpoints();
 
@@ -127,7 +124,7 @@ public static class AuthenticationServiceExtensions
     /// distributed-memory-cache fallback, ASP.NET Core session, data protection,
     /// and the custom <see cref="ITicketStore"/>.
     /// </summary>
-    private static void AddInfrastructure(IServiceCollection services, SessionAuthenticationConfiguration config)
+    private static void AddInfrastructure(IServiceCollection services)
     {
         // Detect HA-fatal misconfigurations *before* installing fallbacks so we can
         // warn at startup. Both signals are evaluated again inside the hosted
@@ -157,29 +154,42 @@ public static class AuthenticationServiceExtensions
         // registration (e.g. AddStackExchangeRedisCache) wins.
         services.AddDistributedMemoryCache();
 
-        services.AddSession(options =>
-        {
-            options.Cookie.Name = config.CookieName + ".session";
-            options.Cookie.HttpOnly = config.Cookie.HttpOnly;
-            options.Cookie.SecurePolicy = ParseSecurePolicy(config.Cookie.SecurePolicy);
-            options.Cookie.SameSite = ParseSameSite(config.Cookie.SameSite);
-            options.IdleTimeout = TimeSpan.FromMinutes(config.SessionTimeoutInMin);
-            options.Cookie.IsEssential = true;
-        });
+        // Session, Data Protection and ticket-store options all bind from the composed
+        // IOptions<SessionAuthenticationConfiguration> pipeline (deferred to options-build
+        // time) rather than an eager registration-time snapshot, so external
+        // Configure/PostConfigure of the configuration is honored.
+        services.AddSession();
+        services.AddOptions<Microsoft.AspNetCore.Builder.SessionOptions>()
+            .Configure<IOptions<SessionAuthenticationConfiguration>>((options, cfg) =>
+            {
+                var config = cfg.Value;
+                options.Cookie.Name = config.CookieName + ".session";
+                options.Cookie.HttpOnly = config.Cookie.HttpOnly;
+                options.Cookie.SecurePolicy = ParseSecurePolicy(config.Cookie.SecurePolicy);
+                options.Cookie.SameSite = ParseSameSite(config.Cookie.SameSite);
+                options.IdleTimeout = TimeSpan.FromMinutes(config.SessionTimeoutInMin);
+                options.Cookie.IsEssential = true;
+            });
 
         // Data Protection is required by DistributedCacheTicketStore + revocation, so
         // register unconditionally. Persistence backends (Redis) should be layered on
-        // top via Aspire or the consuming app.
-        var dp = services.AddDataProtection()
-            .SetApplicationName(ResolveDataProtectionApplicationName(config.DataProtection.ApplicationName))
-            .SetDefaultKeyLifetime(TimeSpan.FromDays(config.DataProtection.KeyLifetimeDays));
+        // top via Aspire or the consuming app. SetApplicationName/SetDefaultKeyLifetime
+        // are the eager-snapshot equivalents of configuring ApplicationDiscriminator /
+        // KeyManagementOptions.NewKeyLifetime; we configure those from IOptions instead.
+        services.AddDataProtection();
+        services.AddOptions<DataProtectionOptions>()
+            .Configure<IOptions<SessionAuthenticationConfiguration>>((options, cfg) =>
+                options.ApplicationDiscriminator =
+                    ResolveDataProtectionApplicationName(cfg.Value.DataProtection.ApplicationName));
+        services.AddOptions<KeyManagementOptions>()
+            .Configure<IOptions<SessionAuthenticationConfiguration>>((options, cfg) =>
+                options.NewKeyLifetime = TimeSpan.FromDays(cfg.Value.DataProtection.KeyLifetimeDays));
 
         // Always register the ticket store + its options. Cookies carry only an
         // opaque id; tokens live server-side.
-        services.Configure<TicketStoreOptions>(opts =>
-        {
-            opts.DefaultSlidingExpiration = TimeSpan.FromMinutes(config.SessionTimeoutInMin);
-        });
+        services.AddOptions<TicketStoreOptions>()
+            .Configure<IOptions<SessionAuthenticationConfiguration>>((opts, cfg) =>
+                opts.DefaultSlidingExpiration = TimeSpan.FromMinutes(cfg.Value.SessionTimeoutInMin));
         services.AddSingleton<ITicketStore, DistributedCacheTicketStore>();
 
         // Refresh-lock auto-pick. A consumer-provided IRefreshLock always wins.
@@ -253,7 +263,7 @@ public static class AuthenticationServiceExtensions
     /// Registers ASP.NET Core's cookie + OpenIdConnect handlers and wires the
     /// <c>OnTokenValidated</c> event to <see cref="ISessionManagementService.RegisterSessionAsync"/>.
     /// </summary>
-    private static void AddCookieAndOidcAuthentication(IServiceCollection services, SessionAuthenticationConfiguration config)
+    private static void AddCookieAndOidcAuthentication(IServiceCollection services)
     {
         services.AddAuthentication(options =>
         {
@@ -261,47 +271,57 @@ public static class AuthenticationServiceExtensions
             options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme;
             options.DefaultSignOutScheme = OpenIdConnectDefaults.AuthenticationScheme;
         })
-        .AddCookie(opts =>
-        {
-            opts.Cookie.Name = config.CookieName;
-            opts.Cookie.HttpOnly = config.Cookie.HttpOnly;
-            opts.Cookie.SecurePolicy = ParseSecurePolicy(config.Cookie.SecurePolicy);
-            opts.Cookie.SameSite = ParseSameSite(config.Cookie.SameSite);
-            opts.Cookie.IsEssential = true;
-            opts.ExpireTimeSpan = TimeSpan.FromMinutes(config.Cookie.ExpireTimeSpanMinutes);
-            opts.SlidingExpiration = config.Cookie.SlidingExpiration;
-        });
+        .AddCookie()
+        .AddOpenIdConnect();
 
+        // Bind the cookie handler options from the composed configuration pipeline plus the
+        // resolved ITicketStore. Deferring to options-build time (instead of an eager snapshot)
+        // means external Configure/PostConfigure of SessionAuthenticationConfiguration is honored.
         services.AddOptions<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme)
-            .Configure<ITicketStore>((opts, store) =>
+            .Configure<IOptions<SessionAuthenticationConfiguration>, ITicketStore>((opts, cfg, store) =>
             {
+                var config = cfg.Value;
+                opts.Cookie.Name = config.CookieName;
+                opts.Cookie.HttpOnly = config.Cookie.HttpOnly;
+                opts.Cookie.SecurePolicy = ParseSecurePolicy(config.Cookie.SecurePolicy);
+                opts.Cookie.SameSite = ParseSameSite(config.Cookie.SameSite);
+                opts.Cookie.IsEssential = true;
+                opts.ExpireTimeSpan = TimeSpan.FromMinutes(config.Cookie.ExpireTimeSpanMinutes);
+                opts.SlidingExpiration = config.Cookie.SlidingExpiration;
+
                 // Server-side ticket storage: cookie carries only the opaque id.
                 opts.SessionStore = store;
             });
 
-        services.AddAuthentication().AddOpenIdConnect(options =>
-        {
-            options.Authority = config.Authority;
-            options.ClientId = config.ClientId;
-            options.ClientSecret = config.ClientSecret;
-            options.RequireHttpsMetadata = config.RequireHttpsMetadata;
-            options.ResponseType = "code";
-            options.UsePkce = config.UsePkce;
-            options.SaveTokens = true;
-            options.GetClaimsFromUserInfoEndpoint = config.QueryUserInfoEndpoint;
-
-            options.Scope.Clear();
-            foreach (var s in (config.Scope ?? "openid profile email").Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        // Likewise bind the OpenIdConnect handler from the composed configuration. A prior
+        // implementation snapshotted these values at registration, so callers using normal
+        // Configure/PostConfigure composition could end up with an empty/default handler
+        // (ClientId="", no Authority) while IOptions validated correctly.
+        services.AddOptions<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme)
+            .Configure<IOptions<SessionAuthenticationConfiguration>>((options, cfg) =>
             {
-                options.Scope.Add(s);
-            }
+                var config = cfg.Value;
+                options.Authority = config.Authority;
+                options.ClientId = config.ClientId;
+                options.ClientSecret = config.ClientSecret;
+                options.RequireHttpsMetadata = config.RequireHttpsMetadata;
+                options.ResponseType = "code";
+                options.UsePkce = config.UsePkce;
+                options.SaveTokens = true;
+                options.GetClaimsFromUserInfoEndpoint = config.QueryUserInfoEndpoint;
 
-            // The signing scheme is the cookie scheme - this is what triggers
-            // ITicketStore on successful sign-in.
-            options.SignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+                options.Scope.Clear();
+                foreach (var s in (config.Scope ?? "openid profile email").Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    options.Scope.Add(s);
+                }
 
-            options.Events.OnTokenValidated = OnTokenValidatedAsync;
-        });
+                // The signing scheme is the cookie scheme - this is what triggers
+                // ITicketStore on successful sign-in.
+                options.SignInScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+
+                options.Events.OnTokenValidated = OnTokenValidatedAsync;
+            });
     }
 
     /// <summary>
@@ -465,19 +485,25 @@ public static class AuthenticationServiceExtensions
     /// Adds token services (refresh, exchange, revocation, introspection).
     /// </summary>
     private static IServiceCollection AddTokenServices(
-        this IServiceCollection services,
-        SessionAuthenticationConfiguration config)
+        this IServiceCollection services)
     {
-        // Add named HttpClient for token operations with resilience
-        services.AddHttpClient(TokenHttpClientName, client =>
+        // Add named HttpClient for token operations with resilience. Both the client
+        // timeout and the resilience policy bind from the composed
+        // IOptions<SessionAuthenticationConfiguration> pipeline (read at resolve /
+        // options-build time) rather than an eager registration-time snapshot, so
+        // external Configure/PostConfigure of the configuration is honored.
+        services.AddHttpClient(TokenHttpClientName, (sp, client) =>
         {
+            var config = sp.GetRequiredService<IOptions<SessionAuthenticationConfiguration>>().Value;
             client.Timeout = TimeSpan.FromSeconds(config.Resilience.RequestTimeoutSeconds);
             client.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
         })
-        .AddStandardResilienceHandler(options =>
+        .AddStandardResilienceHandler()
+        .Configure((options, sp) =>
         {
             // Configure resilience based on configuration
+            var config = sp.GetRequiredService<IOptions<SessionAuthenticationConfiguration>>().Value;
             options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(config.Resilience.RequestTimeoutSeconds);
             options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(config.Resilience.RequestTimeoutSeconds * 2);
 
