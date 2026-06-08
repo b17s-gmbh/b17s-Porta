@@ -67,7 +67,7 @@ public sealed class TokenRevocationService(
             logger.RevocationFailed((int)response.StatusCode, errorContent);
             return false;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
         {
             logger.RevocationError(ex);
             return false;
@@ -129,7 +129,7 @@ public sealed class TokenRevocationService(
 
             return await RevokeTokenAsync(token, options, tokenTypeHint, cancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
         {
             logger.RevocationError(ex);
             return false;

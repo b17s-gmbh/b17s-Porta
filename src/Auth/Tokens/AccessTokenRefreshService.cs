@@ -134,7 +134,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
             var freshRefreshToken = properties.GetTokenValue("refresh_token") ?? refreshToken;
             return await PerformRefreshAsync(context, principal, properties, freshRefreshToken, fallback: freshAccessToken ?? accessToken);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(context.RequestAborted))
         {
             _logger.AccessTokenRefreshError(ex);
             return accessToken;
@@ -174,7 +174,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
             var freshRefreshToken = properties.GetTokenValue("refresh_token") ?? refreshToken;
             return await PerformRefreshAsync(context, principal, properties, freshRefreshToken, fallback);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(context.RequestAborted))
         {
             _logger.AccessTokenRefreshError(ex);
             return fallback;

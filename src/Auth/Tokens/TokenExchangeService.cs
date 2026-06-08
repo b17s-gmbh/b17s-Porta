@@ -108,7 +108,7 @@ public sealed class TokenExchangeService(
 
             return TokenExchangeResult.Success(response);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
         {
             logger.TokenExchangeException(ex, apiConfig.ApiPath);
             // Exception messages from System.Net.Http occasionally include the request URL

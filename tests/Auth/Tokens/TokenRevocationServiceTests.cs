@@ -384,6 +384,52 @@ public sealed class TokenRevocationServiceTests
         Assert.Equal(2, handler.Calls);
     }
 
+    [Fact]
+    public async Task RevokeTokenAsync_Cancellation_Propagates_NotSwallowedAsFalse()
+    {
+        // Caller cancellation (client disconnect / request timeout / host shutdown) must surface as
+        // cancellation rather than be caught and collapsed to a "revocation failed" false.
+        var handler = new ThrowingHandler(new OperationCanceledException());
+        var sut = BuildWithOptions(handler);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.RevokeTokenAsync(
+            "tok",
+            new TokenRevocationOptions
+            {
+                RevocationEndpoint = "https://idp.test/revoke",
+                ClientId = "c",
+                ClientSecret = "s",
+            },
+            cancellationToken: cts.Token));
+    }
+
+    [Fact]
+    public async Task RevokeTokensAsync_Cancellation_AbortsBatch_DoesNotAttemptRemainingTokens()
+    {
+        // Cancellation mid-batch must abort the loop. Previously each per-token revocation swallowed
+        // the cancellation (returning false), so the foreach kept iterating and wasted a doomed
+        // round-trip on every remaining token. The first attempt should throw and stop the batch.
+        var handler = new RecordingHandler(_ => throw new OperationCanceledException());
+        var sut = BuildWithOptions(handler);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sut.RevokeTokensAsync(
+            new TokenRevocationOptions
+            {
+                RevocationEndpoint = "https://idp.test/revoke",
+                ClientId = "c",
+                ClientSecret = "s",
+            },
+            cts.Token,
+            ("refresh-tok", "refresh_token"),
+            ("access-tok", "access_token")));
+
+        Assert.Equal(1, handler.Calls);
+    }
+
     private static OpenIdConnectConfiguration WithRevocationEndpoint() =>
         new() { AdditionalData = { ["revocation_endpoint"] = "https://idp.test/connect/revoke" } };
 

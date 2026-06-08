@@ -37,7 +37,7 @@ public sealed class DiscoveryService(
             logger.DiscoveryConfigurationLoaded(authority);
             return config;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
         {
             logger.DiscoveryFailed(authority, ex);
             return null;

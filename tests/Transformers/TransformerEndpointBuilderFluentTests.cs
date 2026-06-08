@@ -463,12 +463,24 @@ public sealed class TransformerEndpointBuilderFluentTests
         // Span-status contract (§1.5): a transformer that produces its own 4xx must NOT leave a
         // green span behind. Here the transformer sets a 403 status code without faulting, so the
         // happy-path span-status branch is the only thing that can flip the span to Error.
-        var stopped = new List<Activity>();
+        //
+        // The listener is process-global and fires ActivityStopped from whichever thread disposes
+        // the span - including spans from other transformer tests running in parallel. Capturing the
+        // one span we care about into a TaskCompletionSource (rather than List.Add, which is not
+        // thread-safe under concurrent callbacks) and awaiting it also closes the race between the
+        // client GetAsync completing and the server-side `using var activity` dispose running.
+        var spanStopped = new TaskCompletionSource<Activity>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var listener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == PortaActivitySource.Source.Name,
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = stopped.Add,
+            ActivityStopped = a =>
+            {
+                if (a.OperationName == "bff.transformer.SelfWritten4xxTransformer")
+                {
+                    spanStopped.TrySetResult(a);
+                }
+            },
         };
         ActivitySource.AddActivityListener(listener);
 
@@ -501,7 +513,7 @@ public sealed class TransformerEndpointBuilderFluentTests
         var response = await client.GetAsync("/api/denied", TestContext.Current.CancellationToken);
 
         Assert.Equal(403, (int)response.StatusCode);
-        var span = Assert.Single(stopped, a => a.OperationName == "bff.transformer.SelfWritten4xxTransformer");
+        var span = await spanStopped.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.Equal(ActivityStatusCode.Error, span.Status);
         Assert.Equal(403, span.GetTagItem(PortaActivitySource.Tags.HttpStatusCode));
     }

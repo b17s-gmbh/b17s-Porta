@@ -214,6 +214,34 @@ public sealed class TokenExchangeServiceTests
         Assert.DoesNotContain("idp.test", result.Error);
     }
 
+    [Fact]
+    public async Task ExchangeAsync_Cancellation_Propagates_NotSwallowedAsFailure()
+    {
+        // Caller cancellation (client disconnect / request timeout / host shutdown) must surface as
+        // cancellation, not be caught and reported as a generic "Token exchange exception" failure.
+        var handler = new ThrowingHandler(new OperationCanceledException());
+        var sut = Build(handler);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.ExchangeAsync("user-token", BasicApiConfig(), cts.Token));
+    }
+
+    [Fact]
+    public async Task ExchangeAsync_HttpClientTimeout_StaysFailure_NotMistakenForCancellation()
+    {
+        // HttpClient.Timeout surfaces as a TaskCanceledException whose token did NOT fire; it stays
+        // a (non-propagating) failure rather than being treated as caller cancellation.
+        var handler = new ThrowingHandler(new TaskCanceledException("timeout", new TimeoutException()));
+        var sut = Build(handler);
+
+        var result = await sut.ExchangeAsync("user-token", BasicApiConfig(), TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Error);
+    }
+
     private const string AccessTokenTypeUrn = "urn:ietf:params:oauth:token-type:access_token";
     private const string RefreshTokenTypeUrn = "urn:ietf:params:oauth:token-type:refresh_token";
 

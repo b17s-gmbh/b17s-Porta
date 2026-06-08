@@ -264,6 +264,35 @@ public sealed class TokenRefreshServiceTests
         Assert.Equal("cfg-secret", handler.LastForm["client_secret"]);
     }
 
+    [Fact]
+    public async Task RefreshAsync_Options_Cancellation_Propagates_NotReportedAsTransient()
+    {
+        // A caller-cancelled token (client disconnect / request timeout / host shutdown) must
+        // surface as cancellation, not be caught and laundered into a transient refresh failure
+        // that the caller will pointlessly retry.
+        var handler = new ThrowingHandler(new OperationCanceledException());
+        var sut = Build(handler);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.RefreshAsync("refresh-123", ValidOptions, cts.Token));
+    }
+
+    [Fact]
+    public async Task RefreshAsync_Options_HttpClientTimeout_StaysTransient_NotMistakenForCancellation()
+    {
+        // HttpClient.Timeout surfaces as a TaskCanceledException whose token did NOT fire. That is
+        // a genuine transient fault, not caller cancellation, so it must stay on the failure path.
+        var handler = new ThrowingHandler(new TaskCanceledException("timeout", new TimeoutException()));
+        var sut = Build(handler);
+
+        var result = await sut.RefreshAsync("refresh-123", ValidOptions, TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(RefreshFailureReason.Transient, result.Reason);
+    }
+
     private static SessionAuthenticationConfiguration ValidConfig() => new()
     {
         Authority = "https://idp.test",

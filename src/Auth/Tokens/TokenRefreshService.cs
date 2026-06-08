@@ -97,7 +97,7 @@ public sealed class TokenRefreshService(
             logger.RefreshSucceeded(result.ExpiresIn);
             return RefreshTokenResult.Success(result);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
         {
             logger.RefreshError(ex);
             return RefreshTokenResult.Transient();

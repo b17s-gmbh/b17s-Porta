@@ -166,6 +166,21 @@ public sealed class DiscoveryServiceTests
         Assert.Contains(handler.RequestUris, u => u == "http://idp.test/.well-known/openid-configuration");
     }
 
+    [Fact]
+    public async Task GetConfigurationAsync_Cancellation_Propagates_NotSwallowedAsNull()
+    {
+        // A caller-cancelled token (request abort / host shutdown) must surface as cancellation,
+        // not be caught and laundered into a null "discovery failed" result that callers read as an
+        // IdP outage (and log at Error level).
+        var handler = new RecordingHandler(_ => DiscoveryDocument());
+        var sut = Build(handler);
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.GetConfigurationAsync("https://idp.test", cts.Token));
+    }
+
     private static HttpResponseMessage DiscoveryDocument(string issuer = "https://idp.test")
     {
         var json = $$"""

@@ -243,6 +243,46 @@ public class AccessTokenRefreshServiceTests
     }
 
     [Fact]
+    public async Task GetAccessTokenAsync_RefreshCanceled_Propagates_DoesNotServeStaleToken()
+    {
+        // A client disconnect / host shutdown cancels RequestAborted mid-refresh. That must surface
+        // as cancellation, not be swallowed into "serve the stale access token" - which both wastes
+        // work during the disconnect and reports the abort as an ordinary transient refresh failure.
+        // RecordingRefreshLock reports the lock acquired so we actually reach the refresh call.
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        using var ctx = new TestContext(new RecordingRefreshLock())
+        {
+            AccessToken = "stale-access",
+            RefreshToken = "rt",
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5),
+            RefreshThrows = new OperationCanceledException(),
+        };
+        ctx.HttpContext.RequestAborted = cts.Token;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => ctx.Service.GetAccessTokenAsync(ctx.HttpContext));
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_RefreshThrowsNonCancellation_FallsBackToStaleToken()
+    {
+        // The cancellation filter must stay narrow: an unexpected, non-cancellation error keeps the
+        // existing fail-soft behaviour (serve the stale token) rather than propagating to the request.
+        using var ctx = new TestContext(new RecordingRefreshLock())
+        {
+            AccessToken = "stale-access",
+            RefreshToken = "rt",
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5),
+            RefreshThrows = new InvalidOperationException("boom"),
+        };
+
+        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+
+        Assert.Equal("stale-access", token);
+    }
+
+    [Fact]
     public async Task GetAccessTokenAsync_NoExpiresAt_DoesNotRefresh()
     {
         using var ctx = new TestContext
@@ -336,6 +376,10 @@ public class AccessTokenRefreshServiceTests
 
         // When RefreshResult is null, the kind of failure the stubbed refresh reports.
         public RefreshFailureReason RefreshFailure { get; init; } = RefreshFailureReason.Transient;
+
+        // When set, the stubbed refresh throws this instead of returning a result, so we can
+        // exercise the catch-handler's cancellation filter.
+        public Exception? RefreshThrows { get; init; }
 
         public int RefreshCalls { get; private set; }
         public CancellationToken LastRefreshCancellationToken { get; private set; }
@@ -449,6 +493,10 @@ public class AccessTokenRefreshServiceTests
             public Task<RefreshTokenResult> RefreshAsync(string refreshToken, CancellationToken cancellationToken = default)
             {
                 ctx.RecordRefresh(cancellationToken);
+                if (ctx.RefreshThrows is { } toThrow)
+                {
+                    throw toThrow;
+                }
                 var result = ctx.RefreshResult is { } response
                     ? RefreshTokenResult.Success(response)
                     : ctx.RefreshFailure == RefreshFailureReason.InvalidGrant
