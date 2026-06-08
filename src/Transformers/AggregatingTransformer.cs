@@ -11,7 +11,6 @@ namespace b17s.Porta.Transformers;
 /// </summary>
 /// <typeparam name="TResponse">The aggregated response type</typeparam>
 /// <example>
-/// [RequiresAuthentication]
 /// public class EnrichedUserProfileTransformer : AggregatingTransformer&lt;EnrichedUserProfile&gt;
 /// {
 ///     protected override void Configure(AggregatorBuilder builder)
@@ -23,7 +22,7 @@ namespace b17s.Porta.Transformers;
 ///             .WithBody(ctx =&gt; new BackendUserRequest { UserId = ctx.UserId! });
 ///     }
 ///
-///     protected override TResponse MapResults(AggregatorResults results)
+///     protected override EnrichedUserProfile MapResults(AggregatorResults results, TransformerContext context)
 ///     {
 ///         var userInfo = results.Get&lt;UserInfo&gt;("UserInfo");
 ///         var productInfo = results.Get&lt;UserProductInfo&gt;("ProductInfo");

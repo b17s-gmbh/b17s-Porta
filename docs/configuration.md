@@ -66,7 +66,7 @@ builder.Services.AddPortaCore(options => {
     // Default raw-forward header pass-through allow-list. By default the BFF strips
     // Cookie, Authorization, and X-Forwarded-* headers from raw-forwarded requests.
     // Add header names here to opt them back in globally (see docs/raw-forwarding.md).
-    // options.DefaultRawForwardHeaderPassThrough.AllowForwardingHeaders.Add("X-Foo");
+    // options.DefaultRawForwardHeaderPassThrough.AllowedHeaders.Add("X-Foo");
 });
 ```
 

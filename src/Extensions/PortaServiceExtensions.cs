@@ -250,23 +250,7 @@ public static class PortaServiceExtensions
         this IServiceCollection services,
         IConfiguration configuration,
         string sectionName = PortaCoreOptions.SectionName)
-    {
-        var options = new PortaCoreOptions();
-        configuration.GetSection(sectionName).Bind(options);
-
-        return services.AddPortaCore(opt =>
-        {
-            opt.TrustedHosts = options.TrustedHosts;
-            opt.DefaultTimeout = options.DefaultTimeout;
-            opt.MaxRetryAttempts = options.MaxRetryAttempts;
-            opt.RequireAuthorizationByDefault = options.RequireAuthorizationByDefault;
-            opt.EnableTelemetry = options.EnableTelemetry;
-            opt.MaxBodyLogLength = options.MaxBodyLogLength;
-            opt.MaxBackendResponseBytes = options.MaxBackendResponseBytes;
-            opt.MaxRawForwardResponseBytes = options.MaxRawForwardResponseBytes;
-            opt.RawForwardReadIdleTimeout = options.RawForwardReadIdleTimeout;
-        });
-    }
+        => services.AddPortaCore(opt => configuration.GetSection(sectionName).Bind(opt));
 
     /// <summary>
     /// Adds OIDC authentication with session-based token storage.

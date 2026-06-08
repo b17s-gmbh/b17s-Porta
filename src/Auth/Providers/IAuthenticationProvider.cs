@@ -30,7 +30,7 @@ namespace b17s.Porta.Auth.Providers;
 ///         return Task.FromResult(new AuthenticationContext
 ///         {
 ///             AccessToken = apiKey,
-///             Claims = { ["api_key_id"] = "key-123" }
+///             Claims = { ["api_key_id"] = ["key-123"] }
 ///         });
 ///     }
 ///
