@@ -321,6 +321,12 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
 
     private static string GetUserLockKey(HttpContext context, AuthenticateResult auth)
     {
+        // The returned key is written into the distributed-cache keyspace (DistributedCacheRefreshLock)
+        // and emitted in the lock-timeout log line, so every identifier is fingerprinted rather than
+        // embedded raw: session ids are credential-equivalent and the `sub` is PII (SECURITY.md). The
+        // SHA-256 fingerprint is deterministic, so the same user still maps to the same lock across
+        // replicas and connections - preserving the single-flight refresh guarantee this method exists for.
+
         // Preferred: OIDC sub claim - stable across replicas and connections for the user.
         var principal = auth.Principal;
         var userId = principal?.FindFirst("sub")?.Value
@@ -331,7 +337,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
             ?? context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (!string.IsNullOrEmpty(userId))
         {
-            return $"user:{userId}";
+            return LogRedaction.FingerprintLockComponent("user", userId);
         }
 
         // BFF session id is written onto the cookie properties at sign-in
@@ -342,7 +348,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
             && items.TryGetValue(SessionIdPropertyKey, out var bffSessionId)
             && !string.IsNullOrEmpty(bffSessionId))
         {
-            return $"bff-session:{bffSessionId}";
+            return LogRedaction.FingerprintLockComponent("bff-session", bffSessionId);
         }
 
         // context.Session throws when no ISessionFeature is registered. The cookie
@@ -350,13 +356,14 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         if (context.Features.Get<Microsoft.AspNetCore.Http.Features.ISessionFeature>() is { } sessionFeature
             && !string.IsNullOrEmpty(sessionFeature.Session?.Id))
         {
-            return $"session:{sessionFeature.Session.Id}";
+            return LogRedaction.FingerprintLockComponent("session", sessionFeature.Session.Id);
         }
 
         // Last resort. connection.Id makes each in-flight connection its own lock,
         // which re-introduces the stampede this method exists to prevent - but it's
-        // strictly better than throwing. Log so operators can spot the misconfiguration.
-        return $"connection:{context.Connection.Id}";
+        // strictly better than throwing. The `connection:` category survives in the
+        // fingerprinted key so operators can spot the misconfiguration in the timeout log.
+        return LogRedaction.FingerprintLockComponent("connection", context.Connection.Id);
     }
 
 }

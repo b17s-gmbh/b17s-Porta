@@ -258,6 +258,63 @@ public class AccessTokenRefreshServiceTests
         Assert.Equal(0, ctx.RefreshCalls);
     }
 
+    // SECURITY.md: session ids are credential-equivalent and the `sub` is PII; neither may
+    // reach the refresh-lock key, which is both written into the distributed-cache keyspace
+    // and emitted in the lock-timeout log line. The key must be a non-reversible fingerprint.
+
+    [Fact]
+    public async Task RefreshLockKey_OnSubPath_IsFingerprintedAndOmitsRawSubject()
+    {
+        var lockSpy = new RecordingRefreshLock();
+        using var ctx = new TestContext(lockSpy)
+        {
+            AccessToken = "stale-access",
+            RefreshToken = "rt",
+            SessionId = "bff-session-secret-1234",
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5),
+        };
+
+        await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+
+        Assert.NotNull(lockSpy.LastKey);
+        Assert.Equal(LogRedaction.FingerprintLockComponent("user", "user-1"), lockSpy.LastKey);
+        Assert.DoesNotContain("user-1", lockSpy.LastKey);
+        // The credential-equivalent session id must never leak into the lock key either.
+        Assert.DoesNotContain("bff-session-secret-1234", lockSpy.LastKey);
+    }
+
+    [Fact]
+    public async Task RefreshLockKey_OnBffSessionFallback_IsFingerprintedAndOmitsRawSessionId()
+    {
+        var lockSpy = new RecordingRefreshLock();
+        using var ctx = new TestContext(lockSpy)
+        {
+            IncludeSubClaim = false,
+            AccessToken = "stale-access",
+            RefreshToken = "rt",
+            SessionId = "bff-session-secret-1234",
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5),
+        };
+
+        await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+
+        Assert.NotNull(lockSpy.LastKey);
+        Assert.Equal(LogRedaction.FingerprintLockComponent("bff-session", "bff-session-secret-1234"), lockSpy.LastKey);
+        Assert.DoesNotContain("bff-session-secret-1234", lockSpy.LastKey);
+    }
+
+    /// <summary>Captures the key handed to the refresh lock; reports the lock as acquired.</summary>
+    private sealed class RecordingRefreshLock : IRefreshLock
+    {
+        public string? LastKey { get; private set; }
+
+        public Task<RefreshLockHandle> AcquireAsync(string lockKey, TimeSpan timeout, CancellationToken cancellationToken = default)
+        {
+            LastKey = lockKey;
+            return Task.FromResult(new RefreshLockHandle(true));
+        }
+    }
+
     /// <summary>
     /// Stitches together a fake <see cref="IAuthenticationService"/> with a
     /// pre-populated ticket plus stub refresh / api-token services. The system
@@ -271,6 +328,10 @@ public class AccessTokenRefreshServiceTests
         public string? IdToken { get; init; } = "id-1";
         public DateTimeOffset? ExpiresAt { get; init; }
         public string? SessionId { get; init; }
+
+        // When false, the built ticket omits the `sub` claim so the lock-key
+        // derivation falls through to the BFF-session-id path.
+        public bool IncludeSubClaim { get; init; } = true;
         public TokenExchangeResponse? RefreshResult { get; set; }
 
         // When RefreshResult is null, the kind of failure the stubbed refresh reports.
@@ -287,7 +348,7 @@ public class AccessTokenRefreshServiceTests
         public AccessTokenRefreshService Service { get; }
         public HttpContext HttpContext { get; }
 
-        public TestContext()
+        public TestContext(IRefreshLock? refreshLockOverride = null)
         {
             var fakeAuth = new FakeAuthenticationService(this);
             var refreshService = new StubTokenRefreshService(this);
@@ -309,7 +370,7 @@ public class AccessTokenRefreshServiceTests
                 refreshService,
                 apiTokenService,
                 NullLogger<AccessTokenRefreshService>.Instance,
-                LockRegistry,
+                refreshLockOverride ?? LockRegistry,
                 Microsoft.Extensions.Options.Options.Create(new PortaCoreOptions()),
                 sessionManagement: Sessions);
         }
@@ -326,7 +387,10 @@ public class AccessTokenRefreshServiceTests
             }
 
             var identity = new ClaimsIdentity(authenticationType: CookieAuthenticationDefaults.AuthenticationScheme);
-            identity.AddClaim(new Claim("sub", "user-1"));
+            if (IncludeSubClaim)
+            {
+                identity.AddClaim(new Claim("sub", "user-1"));
+            }
             var principal = new ClaimsPrincipal(identity);
             var properties = new AuthenticationProperties();
             if (!string.IsNullOrEmpty(SessionId))
