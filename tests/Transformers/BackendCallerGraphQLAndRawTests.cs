@@ -623,6 +623,64 @@ public sealed class BackendCallerGraphQLAndRawTests
     }
 
     [Fact]
+    public async Task Call_TelemetryDisabled_EmitsNoBackendSpan()
+    {
+        // EnableTelemetry=false must fully opt out of Porta's own backend telemetry: with the
+        // option off, SendRequestAsync must not start a backend ActivitySource span at all
+        // (regression - backend spans previously ran regardless of the option).
+        var stopped = new System.Collections.Concurrent.ConcurrentBag<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PortaActivitySource.Source.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Add,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var handler = new StubHandler(HttpStatusCode.OK, "{}", "application/json");
+        var caller = CreateCaller(handler, enableTelemetry: false);
+
+        var request = new BackendRequest { Method = "GET", Url = "https://backend.test/telemetry-off-marker" };
+        await caller.CallAsync<Product>(request, TestContext.Current.CancellationToken);
+
+        // The call still succeeded - only the instrumentation was suppressed.
+        Assert.NotNull(handler.LastRequest);
+        Assert.DoesNotContain(stopped, s =>
+            (s.GetTagItem(PortaActivitySource.Tags.HttpUrl)?.ToString() ?? "").Contains("telemetry-off-marker"));
+    }
+
+    [Fact]
+    public async Task Call_TelemetryDisabled_LeavesAmbientReverseProxyTraceIntact()
+    {
+        // Disabling Porta telemetry suppresses *Porta's* spans, but it must never disturb the
+        // ambient trace an upstream reverse proxy (or host instrumentation) established: that
+        // activity stays current and running so the external trace is not silently broken and
+        // still propagates to the backend.
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == "ReverseProxy.Test",
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        using var proxySource = new ActivitySource("ReverseProxy.Test");
+        using var proxySpan = proxySource.StartActivity("incoming", ActivityKind.Server);
+        Assert.NotNull(proxySpan);
+
+        var handler = new StubHandler(HttpStatusCode.OK, "{}", "application/json");
+        var caller = CreateCaller(handler, enableTelemetry: false);
+
+        var request = new BackendRequest { Method = "GET", Url = "https://backend.test/x" };
+        await caller.CallAsync<Product>(request, TestContext.Current.CancellationToken);
+
+        // Porta neither replaced the reverse-proxy span with its own backend span nor stopped it:
+        // it is still Activity.Current (Same) and still running (zero Duration until its own Stop).
+        Assert.Same(proxySpan, Activity.Current);
+        Assert.Equal(TimeSpan.Zero, proxySpan!.Duration);
+        Assert.NotNull(handler.LastRequest);
+    }
+
+    [Fact]
     public async Task Call_LogsSanitizedUrl_WithoutQueryString()
     {
         var capture = new CapturingLogger();
@@ -764,7 +822,8 @@ public sealed class BackendCallerGraphQLAndRawTests
         HttpMessageHandler handler,
         long maxBackendResponseBytes = 10 * 1024 * 1024,
         IBackendAuthHandler? authHandler = null,
-        ILogger<BackendCaller>? logger = null)
+        ILogger<BackendCaller>? logger = null,
+        bool enableTelemetry = true)
     {
         var registry = new BackendAuthHandlerRegistry();
         registry.Register(new NoneAuthHandler());
@@ -774,7 +833,11 @@ public sealed class BackendCallerGraphQLAndRawTests
         }
 
         var httpClientFactory = new SingleHandlerHttpClientFactory(handler);
-        var options = Options.Create(new PortaCoreOptions { MaxBackendResponseBytes = maxBackendResponseBytes });
+        var options = Options.Create(new PortaCoreOptions
+        {
+            MaxBackendResponseBytes = maxBackendResponseBytes,
+            EnableTelemetry = enableTelemetry,
+        });
 
         return new BackendCaller(
             httpClientFactory,

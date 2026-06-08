@@ -75,6 +75,10 @@ public sealed class PortaCoreOptions
     /// Spans use fixed category activity names (e.g. "bff.transformation", "bff.backend"); the
     /// specific transformer/backend is carried on a tag ("bff.transformation.strategy",
     /// "bff.backend.service") rather than baked into the activity name.
+    ///
+    /// Disabling this suppresses only Porta's own spans and metrics; it does not touch the ambient
+    /// trace context. An upstream reverse proxy's (or host instrumentation's) trace stays current and
+    /// still propagates to backend calls, so external traces are not broken by opting out.
     /// Default: true
     /// </summary>
     public bool EnableTelemetry { get; set; } = true;

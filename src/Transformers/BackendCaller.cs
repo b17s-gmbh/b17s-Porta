@@ -65,6 +65,20 @@ public sealed class BackendCaller(
     private readonly long _maxBackendResponseBytes = coreOptions.Value.MaxBackendResponseBytes;
     private readonly bool _refreshOn401Enabled = coreOptions.Value.RefreshBackendTokenOn401;
 
+    // Telemetry is opt-out via PortaCoreOptions.EnableTelemetry (default on). When disabled we skip
+    // Porta's own backend spans and metrics so operators can fully opt out (see the transformer and
+    // raw-forward builders, which already gate the same way).
+    //
+    // We deliberately only suppress *our* activity creation; we never touch Activity.Current. An
+    // upstream reverse proxy's trace context stays ambient and still propagates to the backend via
+    // the outbound HttpClient, so external/host-level traces (and the reverse proxy's spans) are
+    // never dropped just because Porta's own instrumentation is off.
+    private readonly bool _enableTelemetry = coreOptions.Value.EnableTelemetry;
+
+    // Null when telemetry is disabled so the metrics?.Record... call sites below become no-ops
+    // without sprinkling EnableTelemetry checks through every recording path.
+    private readonly PortaMetrics? _metrics = coreOptions.Value.EnableTelemetry ? metrics : null;
+
     /// <summary>
     /// Reads the response body into a string, refusing to buffer more than
     /// <see cref="PortaCoreOptions.MaxBackendResponseBytes"/>. Returns <c>null</c>
@@ -380,10 +394,13 @@ public sealed class BackendCaller(
         // Logs get the same query-stripped URL as spans - query strings can carry tokens/API keys.
         var logUrl = SanitizeUrl(request.Url);
 
-        // Start telemetry activity for backend call
-        using var activity = PortaActivitySource.Source.StartActivity(
-            $"{PortaActivitySource.Activities.BackendCall}.{serviceName}",
-            ActivityKind.Client);
+        // Start telemetry activity for backend call (suppressed when telemetry is opted out; the
+        // ambient reverse-proxy/host trace context still flows to the backend - see _enableTelemetry).
+        using var activity = _enableTelemetry
+            ? PortaActivitySource.Source.StartActivity(
+                $"{PortaActivitySource.Activities.BackendCall}.{serviceName}",
+                ActivityKind.Client)
+            : null;
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -459,8 +476,8 @@ public sealed class BackendCaller(
             activity?.SetTag(PortaActivitySource.Tags.HttpStatusCode, statusCode);
             activity?.SetStatus(response.IsSuccessStatusCode ? ActivityStatusCode.Ok : ActivityStatusCode.Error);
 
-            metrics?.RecordBackendRequest(serviceName, "http", statusCode);
-            metrics?.RecordBackendCallDuration(stopwatch.Elapsed.TotalMilliseconds, serviceName, "http");
+            _metrics?.RecordBackendRequest(serviceName, "http", statusCode);
+            _metrics?.RecordBackendCallDuration(stopwatch.Elapsed.TotalMilliseconds, serviceName, "http");
 
             return SendResult.Ok(response);
         }
@@ -751,9 +768,11 @@ public sealed class BackendCaller(
         // Per-attempt span + stopwatch. Sharing one of each across the refresh-on-401 retry froze
         // the stopwatch at the first attempt's duration and let the retry's 200 overwrite the first
         // attempt's 401 on a single span, erasing the refresh from the trace.
-        using var activity = PortaActivitySource.Source.StartActivity(
-            $"{PortaActivitySource.Activities.BackendCall}.{serviceName}",
-            ActivityKind.Client);
+        using var activity = _enableTelemetry
+            ? PortaActivitySource.Source.StartActivity(
+                $"{PortaActivitySource.Activities.BackendCall}.{serviceName}",
+                ActivityKind.Client)
+            : null;
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -834,8 +853,8 @@ public sealed class BackendCaller(
             activity?.SetTag(PortaActivitySource.Tags.HttpStatusCode, statusCode);
             activity?.SetStatus(response.IsSuccessStatusCode ? ActivityStatusCode.Ok : ActivityStatusCode.Error);
 
-            metrics?.RecordBackendRequest(serviceName, "http", statusCode);
-            metrics?.RecordBackendCallDuration(stopwatch.Elapsed.TotalMilliseconds, serviceName, "http");
+            _metrics?.RecordBackendRequest(serviceName, "http", statusCode);
+            _metrics?.RecordBackendCallDuration(stopwatch.Elapsed.TotalMilliseconds, serviceName, "http");
 
             return SendResult.Ok(response);
         }
@@ -882,8 +901,8 @@ public sealed class BackendCaller(
             activity?.AddException(ex);
         }
 
-        metrics?.RecordBackendRequest(serviceName, "http", statusCode);
-        metrics?.RecordBackendCallDuration(stopwatch.Elapsed.TotalMilliseconds, serviceName, "http");
+        _metrics?.RecordBackendRequest(serviceName, "http", statusCode);
+        _metrics?.RecordBackendCallDuration(stopwatch.Elapsed.TotalMilliseconds, serviceName, "http");
     }
 
     private static string ExtractServiceName(string url)
