@@ -63,4 +63,40 @@ public class AddPortaCoreConfigurationBindingTests
         Assert.Equal(1024, options.IdpErrorBodyMaxBytes);
         Assert.Contains("X-Tenant-Id", options.DefaultRawForwardHeaderPassThrough.AllowedHeaders);
     }
+
+    // Regression: the documented "BackendService" appsettings section (BasicAuth credentials and
+    // token-exchange audiences for the built-in BasicAuth/TokenExchange handlers) was never bound
+    // by AddPortaCore(IConfiguration). The handlers consume IOptions<BackendServiceOptions>, so
+    // consumers following the docs got empty options at runtime - silent backend-auth failures.
+    [Fact]
+    public void AddPortaCore_FromConfiguration_BindsBackendServiceSection()
+    {
+        var dict = new Dictionary<string, string?>
+        {
+            ["BackendService:BaseUrl"] = "https://api.internal.example.com",
+            ["BackendService:BasicAuth:Username"] = "bff",
+            ["BackendService:BasicAuth:Password"] = "secret",
+            ["BackendService:Backends:PartnerApi:Username"] = "partner-bff",
+            ["BackendService:Backends:PartnerApi:Password"] = "partner-secret",
+            ["BackendService:AllowGlobalBasicAuthFallback"] = "true",
+            ["BackendService:DefaultTokenExchangeAudience"] = "https://api.internal.example.com",
+            ["BackendService:TokenExchangeAudiences:PartnerApi"] = "https://partner.example.com",
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(dict).Build();
+
+        var services = new ServiceCollection();
+        services.AddPortaCore(config);
+
+        var sp = services.BuildServiceProvider();
+        var options = sp.GetRequiredService<IOptions<BackendServiceOptions>>().Value;
+
+        Assert.Equal("https://api.internal.example.com", options.BaseUrl);
+        Assert.Equal("bff", options.BasicAuth.Username);
+        Assert.Equal("secret", options.BasicAuth.Password);
+        Assert.True(options.AllowGlobalBasicAuthFallback);
+        Assert.Equal("partner-bff", options.Backends["PartnerApi"].Username);
+        Assert.Equal("partner-secret", options.Backends["PartnerApi"].Password);
+        Assert.Equal("https://api.internal.example.com", options.DefaultTokenExchangeAudience);
+        Assert.Equal("https://partner.example.com", options.TokenExchangeAudiences["PartnerApi"]);
+    }
 }

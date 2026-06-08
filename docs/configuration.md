@@ -193,6 +193,8 @@ The per-key suffixes (`AccessTokenKey`, `IdTokenKey`, `RefreshTokenKey`, `Expire
 
 `BackendServiceOptions` (section `"BackendService"`) configures the built-in `BasicAuth` and `TokenExchange` backend-auth handlers without requiring you to write a custom `IBackendAuthHandler`.
 
+The `"BackendService"` section is bound automatically by the `AddPortaCore(IConfiguration)` overload. If you wire core options imperatively via `AddPortaCore(Action<PortaCoreOptions>)` instead, bind it yourself: `services.Configure<BackendServiceOptions>(builder.Configuration.GetSection(BackendServiceOptions.SectionName))`.
+
 ```json
 {
   "BackendService": {

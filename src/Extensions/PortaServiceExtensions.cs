@@ -237,14 +237,24 @@ public static class PortaServiceExtensions
     /// </summary>
     /// <param name="services">The service collection</param>
     /// <param name="configuration">The configuration root</param>
-    /// <param name="sectionName">The configuration section name (default: "PortaCore")</param>
+    /// <param name="sectionName">The configuration section name for <see cref="PortaCoreOptions"/> (default: "PortaCore")</param>
     /// <returns>The service collection for chaining</returns>
+    /// <remarks>
+    /// In addition to <see cref="PortaCoreOptions"/> from <paramref name="sectionName"/>, this overload
+    /// also binds <see cref="BackendServiceOptions"/> from the fixed
+    /// <see cref="BackendServiceOptions.SectionName">"BackendService"</see> section so the built-in
+    /// BasicAuth and TokenExchange backend-auth handlers pick up appsettings-supplied credentials
+    /// and audiences.
+    /// </remarks>
     /// <example>
     /// <code>
     /// // In appsettings.json:
     /// // "PortaCore": {
     /// //   "TrustedHosts": ["https://api.example.com"],
     /// //   "DefaultTimeout": "00:00:30"
+    /// // },
+    /// // "BackendService": {
+    /// //   "BasicAuth": { "Username": "bff", "Password": "..." }
     /// // }
     ///
     /// builder.Services.AddPortaCore(builder.Configuration);
@@ -254,7 +264,18 @@ public static class PortaServiceExtensions
         this IServiceCollection services,
         IConfiguration configuration,
         string sectionName = PortaCoreOptions.SectionName)
-        => services.AddPortaCore(opt => configuration.GetSection(sectionName).Bind(opt));
+    {
+        // Bind the documented "BackendService" section so the built-in BasicAuth and
+        // TokenExchange handlers (which consume IOptions<BackendServiceOptions>) pick up
+        // appsettings-supplied credentials and audiences. Without this, consumers following
+        // the docs would get empty options at runtime - silent backend-auth failures.
+        // Bound through the standard options pipeline so consumer Configure/PostConfigure
+        // composition still applies.
+        services.Configure<BackendServiceOptions>(
+            configuration.GetSection(BackendServiceOptions.SectionName));
+
+        return services.AddPortaCore(opt => configuration.GetSection(sectionName).Bind(opt));
+    }
 
     /// <summary>
     /// Adds OIDC authentication with session-based token storage.
