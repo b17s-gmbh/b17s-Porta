@@ -265,18 +265,12 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                     ? context.Request.Method
                     : backendMethod!;
 
-                // Interpolate URL with route values and forward query parameters
-                var interpolatedUrl = RouteUrlInterpolator.Interpolate(backendUrl!, transformerContext.RouteValues);
-                if (context.Request.QueryString.HasValue)
-                {
-                    // QueryString.Value includes the leading '?'. If the backend template already
-                    // carries a query string, merge with '&' so we don't emit a second '?' (which
-                    // yields a malformed URL and swallows the inbound params).
-                    var inboundQuery = context.Request.QueryString.Value!;
-                    interpolatedUrl += interpolatedUrl.Contains('?', StringComparison.Ordinal)
-                        ? string.Concat("&", inboundQuery.AsSpan(1))
-                        : inboundQuery;
-                }
+                // Interpolate URL with route values and forward query parameters. The query merge
+                // is shared with the typed path (RouteUrlInterpolator.AppendQueryString) so the two
+                // can't drift apart again.
+                var interpolatedUrl = RouteUrlInterpolator.AppendQueryString(
+                    RouteUrlInterpolator.Interpolate(backendUrl!, transformerContext.RouteValues),
+                    context.Request.QueryString.Value);
 
                 // Build backend request
                 var backendRequest = new BackendRequest

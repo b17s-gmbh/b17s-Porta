@@ -55,6 +55,35 @@ internal static class RouteUrlInterpolator
         return url;
     }
 
+    /// <summary>
+    /// Merges an inbound query string into an already-interpolated backend URL so typed
+    /// pass-through/transformer endpoints forward <c>?filter</c>, <c>?page</c>, etc. to the
+    /// backend exactly as the raw-forward path does.
+    /// </summary>
+    /// <param name="url">The interpolated backend URL (the static template may itself carry a query).</param>
+    /// <param name="inboundQueryString">
+    /// The incoming request's query string, expected in <see cref="Microsoft.AspNetCore.Http.QueryString"/>
+    /// form (leading <c>?</c> included). Null or empty leaves <paramref name="url"/> untouched.
+    /// </param>
+    /// <returns>
+    /// <paramref name="url"/> with the inbound query appended: with <c>&amp;</c> when the URL already
+    /// carries a query (so a second <c>?</c> is never emitted), otherwise with the leading <c>?</c> intact.
+    /// </returns>
+    public static string AppendQueryString(string url, string? inboundQueryString)
+    {
+        if (string.IsNullOrEmpty(inboundQueryString))
+        {
+            return url;
+        }
+
+        // inboundQueryString includes the leading '?'. If the backend template already carries a
+        // query string, merge with '&' so we don't emit a second '?' (which yields a malformed URL
+        // and swallows the inbound params).
+        return url + (url.Contains('?', StringComparison.Ordinal)
+            ? string.Concat("&", inboundQueryString.AsSpan(1))
+            : inboundQueryString);
+    }
+
     private static string ReplacePlaceholder(string url, string placeholder, string? value, bool catchAll)
     {
         if (!url.Contains(placeholder, StringComparison.Ordinal))

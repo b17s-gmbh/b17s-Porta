@@ -55,11 +55,44 @@ public sealed class TransformerPipelineE2ETests
         var recorded = Assert.Single(backend.ReceivedRequests);
         Assert.Equal("GET", recorded.Method);
         Assert.Equal("/products", recorded.Path);
-        // Pass-through must NOT swallow the inbound query string. (At time of writing the
-        // transformer pipeline does not append the inbound query to the backend URL —
-        // this assertion locks in whichever direction the framework picks so a future
-        // change to either behavior is intentional.)
-        Assert.Contains("category=fruit", recorded.QueryString + response.RequestMessage!.RequestUri!.Query);
+        // Pass-through must forward the inbound query string to the *backend*, the same way the
+        // raw-forward path does (RouteUrlInterpolator.AppendQueryString). Assert on the backend's
+        // recorded query string specifically — not the client's outbound URI — so a regression that
+        // drops the query when rebuilding the backend URL from route values is actually caught.
+        Assert.Equal("?category=fruit&sort=asc", recorded.QueryString);
+    }
+
+    [Fact]
+    public async Task MapPassThrough_MergesInboundQuery_WithBackendTemplateQuery()
+    {
+        // Typed pass-through shares RouteUrlInterpolator.AppendQueryString with the raw-forward
+        // path, so the merge-with-existing-query case must behave identically: the inbound query
+        // merges with '&', never a second '?'.
+        using var backend = new FakeBackend(BackendBase);
+        backend.MapGet("/products", async ctx =>
+        {
+            ctx.Response.ContentType = MediaTypeNames.Application.Json;
+            await ctx.Response.WriteAsJsonAsync(new EchoResponse { Echoed = "p9" });
+        });
+
+        using var bff = await new PortaTestHost()
+            .WithBackend(backend)
+            .MapEndpoints(endpoints => endpoints
+                .MapPassThrough<EchoResponse>()
+                .FromGet("/api/products")
+                .ToBackend("GET", $"{BackendBase}/products?tenant=acme")
+                .AllowAnonymous()
+                .Build())
+            .StartAsync();
+
+        var response = await bff.CreateAuthenticatedClient()
+            .GetAsync("/api/products?category=fruit", TestContext.Current.CancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var recorded = Assert.Single(backend.ReceivedRequests);
+        Assert.Equal("/products", recorded.Path);
+        // Exactly one '?' separator, both params present, merged with '&'.
+        Assert.Equal("?tenant=acme&category=fruit", recorded.QueryString);
     }
 
     [Fact]

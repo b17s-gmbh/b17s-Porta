@@ -349,7 +349,9 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
                     transformerContext.Properties["BackendRequest"] = new BackendRequest
                     {
                         Method = effectiveBackendMethod,
-                        Url = RouteUrlInterpolator.Interpolate(backendUrl!, transformerContext.RouteValues),
+                        Url = RouteUrlInterpolator.AppendQueryString(
+                            RouteUrlInterpolator.Interpolate(backendUrl!, transformerContext.RouteValues),
+                            context.Request.QueryString.Value),
                         AccessToken = authContext.AccessToken,
                         Timeout = timeout,
                         UseTokenExchange = useTokenExchange,
