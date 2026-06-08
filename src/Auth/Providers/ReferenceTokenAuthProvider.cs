@@ -41,9 +41,13 @@ public sealed class ReferenceTokenAuthProvider(
         var token = authHeader[options.TokenPrefix.Length..].Trim();
         authContext.AccessToken = token;
 
-        // Check cache first. Positive entries already passed audience/issuer/client_id
-        // binding when inserted; negative entries short-circuit to a failed context to
-        // prevent unbounded introspection traffic for revoked / unknown tokens.
+        // Check cache first. The cache stores the raw introspection response (the AS's
+        // active/claims verdict), which is stable for the token's lifetime; binding
+        // (audience/issuer/client_id) is re-validated against the CurrentValue options
+        // on every hit so that tightening ValidAudiences/ValidClientIds/ValidIssuers or
+        // the validation flags takes effect immediately rather than waiting for the entry
+        // to expire. Negative entries short-circuit to a failed context to prevent
+        // unbounded introspection traffic for revoked / unknown tokens.
         var cacheKey = BuildIntrospectionCacheKey(token);
         var cachedData = await cache.GetStringAsync(cacheKey, cancellationToken);
         if (!string.IsNullOrEmpty(cachedData))
@@ -65,7 +69,17 @@ public sealed class ReferenceTokenAuthProvider(
 
             if (cachedResult?.IsActive == true)
             {
-                PopulateAuthContextFromResult(authContext, cachedResult);
+                // Re-run binding against the current options. A cached active verdict does
+                // not grant a free pass past audience/issuer/client_id checks that may have
+                // been tightened since the entry was written.
+                if (ValidateBinding(cachedResult, options))
+                {
+                    PopulateAuthContextFromResult(authContext, cachedResult);
+                    return authContext;
+                }
+
+                authContext.AccessToken = null;
+                authContext.Claims.Clear();
                 return authContext;
             }
             if (cachedResult is not null)

@@ -498,6 +498,40 @@ public sealed class ReferenceTokenAuthProviderFlowTests
         Assert.True(accepted.IsAuthenticated);
     }
 
+    [Fact]
+    public async Task PositiveCacheEntry_RevalidatesBindingAgainstTightenedOptions()
+    {
+        // A token accepted and positively cached under a permissive policy must NOT keep
+        // authenticating after ValidAudiences is tightened - binding is re-checked on every
+        // cache hit against CurrentValue, not just on the introspection cache miss.
+        var introspector = new FakeIntrospector(_ => Active(new() { ["aud"] = "old-aud" }));
+        var monitor = new ToggleOptionsMonitor<ReferenceTokenAuthOptions>(
+            OptionsFor(validateAudience: true, validateIssuer: false));
+        monitor.Current.ValidAudiences = ["old-aud"];
+
+        var sut = new ReferenceTokenAuthProvider(
+            introspector,
+            new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())),
+            NullLogger<ReferenceTokenAuthProvider>.Instance,
+            monitor);
+
+        // First call: accepted under the old policy and written to the positive cache.
+        var accepted = await sut.GetAuthContextAsync(WithAuthHeader(Bearer), TestContext.Current.CancellationToken);
+        Assert.True(accepted.IsAuthenticated);
+        Assert.Equal(1, introspector.CallCount);
+
+        // Tighten the policy so the cached token's audience is no longer allowed. The same
+        // token now hits the positive cache entry, so the binding re-check is what must reject it.
+        monitor.Current.ValidAudiences = ["new-aud"];
+        var rejected = await sut.GetAuthContextAsync(WithAuthHeader(Bearer), TestContext.Current.CancellationToken);
+
+        Assert.False(rejected.IsAuthenticated);
+        Assert.Null(rejected.AccessToken);
+        Assert.Empty(rejected.Claims);
+        // No re-introspection: the verdict came from the cache hit, rejected by binding alone.
+        Assert.Equal(1, introspector.CallCount);
+    }
+
     // ---------- helpers ----------
 
     private static ReferenceTokenAuthProvider Build(
