@@ -89,8 +89,6 @@ public class EnrichedUserProfileTransformer : AggregatingTransformer<EnrichedUse
 {
     protected override void Configure(AggregatorBuilder builder)
     {
-        builder.RequireAuth();
-
         builder.Backend<UserInfo>("UserInfo")
             .WithBody(ctx => new BackendUserRequest { UserId = ctx.UserId! });
 

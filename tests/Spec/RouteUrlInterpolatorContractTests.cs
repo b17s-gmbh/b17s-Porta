@@ -53,8 +53,7 @@ public class RouteUrlInterpolatorContractTests
     public void RawSeparatorInValue_MustBePercentEncoded()
     {
         // §10: "Each segment is Uri.EscapeDataString-encoded" — a raw '/' MUST become %2F so the
-        // value cannot introduce a new path segment. (Spec-correct expectation; currently fails
-        // because the implementation lets the raw '/' survive as a path separator.)
+        // value cannot introduce a new path segment.
         var result = Interpolate("https://api.internal/users/{id}", ("id", "a/b"));
 
         Assert.Equal("https://api.internal/users/a%2Fb", result);

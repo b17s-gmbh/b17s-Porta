@@ -80,7 +80,7 @@ public class FileUploadTransformer : TransformerBase<object>
 
 | Property | Description |
 |----------|-------------|
-| `IsSuccess` | True if backend returned 2xx status |
+| `IsSuccess` | True if transport succeeded (a response was received); not necessarily 2xx |
 | `StatusCode` | HTTP status code from backend |
 | `Response` | Raw `HttpResponseMessage` (dispose after use) |
 | `ContentType` | Content-Type header from response |
