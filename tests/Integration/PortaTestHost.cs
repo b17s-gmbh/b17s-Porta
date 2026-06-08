@@ -1,5 +1,4 @@
 using b17s.Porta.Auth.Discovery;
-using b17s.Porta.Auth.Providers;
 using b17s.Porta.Auth.Sessions;
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
@@ -91,9 +90,9 @@ public sealed class PortaTestHost
     public PortaTestHost WithReferenceToken(FakeIdp idp, Action<ReferenceTokenAuthOptions>? configure = null)
     {
         // Setting _idp routes the discovery client (TokenHttpClientName) to the fake authority in
-        // StartAsync and suppresses the default AnonymousAuthenticationProvider, leaving the composite
-        // with only the reference-token provider. It does NOT enable the OIDC scheme (that needs
-        // _addPortaAuthentication), so the harmless OIDC PostConfigure callback never executes.
+        // StartAsync, leaving the composite with only the reference-token provider. It does NOT
+        // enable the OIDC scheme (that needs _addPortaAuthentication), so the harmless OIDC
+        // PostConfigure callback never executes.
         _idp = idp;
         _serviceConfigs.Add(services =>
         {
@@ -373,15 +372,9 @@ public sealed class PortaTestHost
                             .ConfigurePrimaryHttpMessageHandler(() => handler);
                     }
 
-                    // Default to anonymous auth when no IdP is wired. AddPortaCore's
-                    // CompositeAuthenticationProvider throws if zero providers are
-                    // registered, even on endpoints that call AllowAnonymous(), because
-                    // the transformer handler always resolves IAuthenticationProvider.
-                    if (idp is null && addPortaCore)
-                    {
-                        services.AddPortaAuthProvider<AnonymousAuthenticationProvider>(_ =>
-                            new AnonymousAuthenticationProvider());
-                    }
+                    // No-IdP hosts register no authentication provider. AddPortaCore's
+                    // CompositeAuthenticationProvider yields an unauthenticated context when zero
+                    // providers are registered, so anonymous endpoints work without any extra wiring.
 
                     foreach (var configure in serviceConfigs)
                     {
@@ -456,18 +449,3 @@ public sealed class PortaTestHost
     }
 }
 
-/// <summary>
-/// Default auth provider for unauthenticated integration suites. Returns an
-/// unauthenticated <see cref="AuthenticationContext"/> for every request.
-/// </summary>
-internal sealed class AnonymousAuthenticationProvider : IAuthenticationProvider
-{
-    public Task<AuthenticationContext> GetAuthContextAsync(HttpContext context, CancellationToken cancellationToken = default)
-        => Task.FromResult(AuthenticationContext.Unauthenticated());
-
-    public Task<AuthenticationContext?> RefreshAsync(AuthenticationContext current, CancellationToken cancellationToken = default)
-        => Task.FromResult<AuthenticationContext?>(null);
-
-    public Task InvalidateAsync(HttpContext context, CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
-}

@@ -104,13 +104,14 @@ public static class PortaServiceExtensions
             var providers = sp.GetServices<IAuthenticationProviderRegistration>()
                 .Select(r => r.Provider)
                 .ToList();
-            if (providers.Count == 0)
-            {
-                throw new InvalidOperationException(
-                    "No authentication provider registered. " +
-                    "Call AddPortaOidcAuth() for OIDC authentication or AddPortaAuthProvider<T>() for custom authentication.");
-            }
 
+            // No providers is a valid configuration: the documented "Minimal Setup (No Auth)"
+            // (AddPortaCore + .AllowAnonymous()) registers none. The transformer and raw-forward
+            // handlers resolve IAuthenticationProvider unconditionally, so throwing here would turn
+            // every anonymous endpoint into a request-time 500. An empty composite instead yields
+            // AuthenticationContext.Unauthenticated(); endpoints that genuinely require auth are
+            // still gated by the principal check in the handlers, which returns 401 (not 500) when
+            // no credential ever authenticates.
             var logger = sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CompositeAuthenticationProvider>>();
             return new CompositeAuthenticationProvider(providers, logger);
         });
