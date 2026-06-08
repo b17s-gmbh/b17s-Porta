@@ -186,6 +186,14 @@ To bound BFF egress and defeat slow-loris backends, raw-forward responses are su
 
 Both limits abort mid-stream if they trip after headers have been written, which intentionally tears the connection rather than presenting the client with a silently truncated body.
 
+## Backend Error Mapping
+
+Built-in raw-forward endpoints (`MapRawForward` / `AddRawForwardTransformer`) apply the same `IBackendErrorMapper` as the typed transformer routes. By default a **backend** `401`/`403` is mapped to `502 Bad Gateway` *before* the response is relayed: a backend credential failure means the BFF's credentials to the backend are wrong, not that the user's session is invalid, so streaming the raw `401` would wrongly sign the user out on the frontend. When a status is remapped, the backend body is **not** streamed; the client receives a clean `{ "error": "..." }` JSON payload with the mapped status.
+
+Statuses the mapper passes through (e.g. `404`, `409`, `500`) are relayed verbatim — raw forward is a proxy and those are legitimate to surface to the client. Register a custom `IBackendErrorMapper` (or `PassThroughBackendErrorMapper` to relay `401`/`403` unchanged) to override this; see [transformers.md](transformers.md) for the contract.
+
+> This mapping applies to the built-in pipeline. A custom transformer that calls `CallRawAsync` directly (see [CallRawAsync](#callrawasync) above) owns its own status handling — `RawBackendResult.IsSuccess` reflects transport success, not the backend HTTP status.
+
 ### Request Direction — Kestrel Reliance
 
 The two limits above guard the **response** direction (backend → BFF → client) only. Porta deliberately does **not** add a per-endpoint cap on the **request** direction (client → BFF → backend); raw-forward streams the incoming request body straight through to the backend. Protection against an over-large or slow-loris **upload** is delegated to Kestrel's global server limits, which you should configure for your deployment:

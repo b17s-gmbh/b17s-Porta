@@ -210,6 +210,11 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
             var transformer = context.RequestServices.GetRequiredService<TTransformer>();
             var authProvider = context.RequestServices.GetRequiredService<IAuthenticationProvider>();
             var backendCaller = context.RequestServices.GetRequiredService<IBackendCaller>();
+            // Same backend-error mapper the typed routes use (see BackendCaller). Raw forward must
+            // remap backend credential failures (401/403 -> 502) too, otherwise a backend auth
+            // failure streams straight to the client and signs the user out. Fall back to the
+            // default mapper if none is registered, mirroring BackendCaller's own resolution.
+            var errorMapper = context.RequestServices.GetService<IBackendErrorMapper>() ?? new DefaultBackendErrorMapper();
             var metrics = enableTelemetry ? context.RequestServices.GetService<PortaMetrics>() : null;
 
             using var activity = enableTelemetry
@@ -347,17 +352,48 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
 
                 if (!result.IsSuccess)
                 {
-                    logger.LogWarning("Raw forward backend call failed: {StatusCode} {Error}",
-                        result.StatusCode, result.Error);
+                    // Transport-level failure (timeout, network, config error, or an auth-handler
+                    // exception surfaced as 401). Route through the configured mapper so an
+                    // auth-handler 401 becomes a 502 rather than leaking to the client.
+                    var (failStatus, failMessage) = errorMapper.MapError(
+                        result.StatusCode, result.Error, backendRequest);
 
-                    context.Response.StatusCode = MapBackendStatusCode(result.StatusCode);
-                    await context.Response.WriteAsJsonAsync(new { error = result.Error ?? "Backend request failed" }, context.RequestAborted);
+                    logger.LogWarning("Raw forward backend call failed: {StatusCode} -> {MappedStatus} {Error}",
+                        result.StatusCode, failStatus, result.Error);
+
+                    context.Response.StatusCode = failStatus;
+                    await context.Response.WriteAsJsonAsync(new { error = failMessage }, context.RequestAborted);
                     return;
                 }
 
                 // Stream response back to client
                 var response = result.Response!;
-                context.Response.StatusCode = (int)response.StatusCode;
+                var backendStatus = (int)response.StatusCode;
+
+                // A backend response was received, but a backend credential failure (401/403) must
+                // not pass straight through: the frontend would read it as the *user's* session
+                // being invalid and sign them out. Run the backend status through the same
+                // IBackendErrorMapper the typed routes use; if it reclassifies the status
+                // (e.g. 401/403 -> 502), emit a clean BFF error instead of streaming the backend's
+                // auth-failure response (status, headers, and body) to the client. Statuses the
+                // mapper passes through (404, 409, 500, ...) stream as before - raw forward is a
+                // proxy and those are legitimate to relay.
+                var (mappedStatus, mappedMessage) = errorMapper.MapError(
+                    backendStatus, response.ReasonPhrase, backendRequest);
+                if (mappedStatus != backendStatus)
+                {
+                    logger.LogWarning("Raw forward backend returned {BackendStatus}; mapped to {MappedStatus}",
+                        backendStatus, mappedStatus);
+
+                    context.Response.StatusCode = mappedStatus;
+                    await context.Response.WriteAsJsonAsync(new { error = mappedMessage }, context.RequestAborted);
+
+                    activity?.SetTag(PortaActivitySource.Tags.HttpStatusCode, mappedStatus);
+                    activity?.SetStatus(ActivityStatusCode.Error);
+                    return;
+                }
+
+                context.Response.StatusCode = backendStatus;
 
                 // Let the transformer scrub/augment backend response headers BEFORE we
                 // copy them to the outbound response and BEFORE the body is streamed.
@@ -524,16 +560,6 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
         return routeHandler;
     }
 
-
-    private static int MapBackendStatusCode(int backendStatusCode)
-    {
-        return backendStatusCode switch
-        {
-            401 => 502, // Backend auth failure -> Bad Gateway
-            403 => 502, // Backend authz failure -> Bad Gateway
-            _ => backendStatusCode
-        };
-    }
 
     /// <summary>
     /// Streams <paramref name="source"/> into <paramref name="destination"/> in chunks, aborting

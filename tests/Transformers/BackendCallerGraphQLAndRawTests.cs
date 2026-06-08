@@ -218,13 +218,10 @@ public sealed class BackendCallerGraphQLAndRawTests
     [Fact]
     public async Task GraphQL_HttpErrorFromBackend_ReturnsFromBackendErrorMapped()
     {
-        // The pre-response failure path (SendRequest returns IsSuccess=false). Here we simulate
-        // it via a 5xx that the SendRequestAsync wrapper still treats as Ok (response received)
-        // but CallGraphQLAsync passes through ReadBoundedResponseStringAsync — the body parses
-        // as JSON with no errors/no data, so the result is Success(default!) at statusCode 502.
-        //
-        // To actually exercise FromBackendError we need SendRequestAsync to fail. A network
-        // exception path does that — see GraphQL_BackendNetworkFailure_ReturnsFromBackendError.
+        // A non-2xx HTTP status with a benign-looking GraphQL envelope ({"data":null}, no errors)
+        // must NOT be reported as a successful empty-data response. With no GraphQL `errors` to
+        // surface, the HTTP failure wins and is routed through the same IBackendErrorMapper the
+        // typed CallAsync overloads use. A 502 maps to 502 (ServerError).
         var handler = new StubHandler(HttpStatusCode.BadGateway, """{"data":null}""", "application/json");
         var caller = CreateCaller(handler);
 
@@ -233,10 +230,54 @@ public sealed class BackendCallerGraphQLAndRawTests
             request, "{ x }", null, "x",
             cancellationToken: TestContext.Current.CancellationToken);
 
-        // HTTP status flows through; the GraphQL envelope had no data and no errors so
-        // CallGraphQLAsync still returns Success — this asserts the status carries through.
-        Assert.True(result.IsSuccess);
+        Assert.False(result.IsSuccess);
         Assert.Equal(502, result.HttpStatusCode);
+        Assert.Equal(BackendErrorType.ServerError, result.ErrorType);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task GraphQL_BackendAuthFailure_MappedTo502_LikeTypedRoutes(HttpStatusCode backendStatus)
+    {
+        // A backend 401/403 means the BFF's credentials to the backend are wrong, NOT that the
+        // user's session is invalid. The default mapper turns these into 502 so the frontend
+        // doesn't sign the user out — identical to the typed CallAsync path.
+        var handler = new StubHandler(backendStatus, """{"data":null}""", "application/json");
+        var caller = CreateCaller(handler);
+
+        var request = new BackendRequest { Method = "POST", Url = "https://backend.test/graphql" };
+        var result = await caller.CallGraphQLAsync<Product>(
+            request, "{ x }", null, "x",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(502, result.HttpStatusCode);
+        Assert.Equal(BackendErrorType.ServerError, result.ErrorType);
+    }
+
+    [Fact]
+    public async Task GraphQL_HttpErrorWithGraphQLErrors_SurfacesErrorsNotHttpStatus()
+    {
+        // GraphQL backends may return a structured `errors` envelope alongside a non-2xx status.
+        // The errors (and their code -> status mapping) must win over the raw HTTP status so the
+        // client still gets the structured GraphQL error.
+        var handler = new StubHandler(
+            HttpStatusCode.BadRequest,
+            """{"errors":[{"message":"Field 'x' not found","extensions":{"code":"NOT_FOUND"}}]}""",
+            "application/json");
+        var caller = CreateCaller(handler);
+
+        var request = new BackendRequest { Method = "POST", Url = "https://backend.test/graphql" };
+        var result = await caller.CallGraphQLAsync<Product>(
+            request, "{ x }", null, "x",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Errors);
+        Assert.Single(result.Errors!);
+        Assert.Equal("Field 'x' not found", result.Errors![0].Message);
+        Assert.Equal(404, result.MappedStatusCode); // NOT_FOUND -> 404, not the HTTP 400
     }
 
     [Fact]

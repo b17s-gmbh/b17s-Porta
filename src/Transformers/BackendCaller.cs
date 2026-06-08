@@ -269,6 +269,50 @@ public sealed class BackendCaller(
             logger.BackendResponseBody(logUrl, statusCode, loggedBody);
         }
 
+        // Parse the GraphQL envelope first - even on a non-2xx status - so a structured `errors`
+        // body is surfaced with its proper code -> status mapping. An empty/unparseable body
+        // cannot carry GraphQL errors, so parse failures are deferred until after the HTTP-status
+        // gate below.
+        GraphQLResponse? graphqlResponse = null;
+        JsonException? parseError = null;
+        if (!string.IsNullOrWhiteSpace(content))
+        {
+            try
+            {
+                graphqlResponse = JsonSerializer.Deserialize<GraphQLResponse>(content, JsonOptions);
+            }
+            catch (JsonException ex)
+            {
+                parseError = ex;
+                logger.BackendDeserializationFailed(logUrl, statusCode, content.Length, ex);
+                var loggedFailedBody = PrepareBodyForLog(content);
+                if (loggedFailedBody != null)
+                {
+                    logger.BackendDeserializationFailedBody(logUrl, statusCode, loggedFailedBody);
+                }
+            }
+        }
+
+        // A GraphQL `errors` envelope wins over the raw HTTP status: backends may return errors
+        // alongside a non-2xx response, and the GraphQL code -> status mapping is more specific.
+        if (graphqlResponse?.Errors is { Count: > 0 } graphqlErrors)
+        {
+            logger.GraphQLErrorsReceived(logUrl, graphqlErrors.Count,
+                string.Join("; ", graphqlErrors.Select(e => e.Message)));
+            return GraphQLResult<TResponse>.FromGraphQLErrors(graphqlErrors, statusCode);
+        }
+
+        // No GraphQL `errors` to surface. A non-2xx HTTP status is therefore a backend/transport
+        // failure (502, 401, 403, 500, ...), NOT a successful empty-data response. Route it
+        // through the same IBackendErrorMapper the typed CallAsync overloads use so backend
+        // credential failures (401/403) map to 502 instead of leaking to the client and signing
+        // the user out.
+        if (!response.IsSuccessStatusCode)
+        {
+            return MapHttpErrorToGraphQLResult<TResponse>(statusCode, response.ReasonPhrase, request);
+        }
+
+        // From here on the HTTP status was 2xx: body-shape problems are malformed-response errors.
         if (string.IsNullOrWhiteSpace(content))
         {
             return GraphQLResult<TResponse>.FromBackendError(
@@ -277,23 +321,11 @@ public sealed class BackendCaller(
                 BackendErrorType.InvalidResponse);
         }
 
-        // Parse GraphQL response
-        GraphQLResponse? graphqlResponse;
-        try
+        if (parseError != null)
         {
-            graphqlResponse = JsonSerializer.Deserialize<GraphQLResponse>(content, JsonOptions);
-        }
-        catch (JsonException ex)
-        {
-            logger.BackendDeserializationFailed(logUrl, statusCode, content.Length, ex);
-            var loggedFailedBody = PrepareBodyForLog(content);
-            if (loggedFailedBody != null)
-            {
-                logger.BackendDeserializationFailedBody(logUrl, statusCode, loggedFailedBody);
-            }
             return GraphQLResult<TResponse>.FromBackendError(
                 statusCode,
-                $"Invalid GraphQL response format: {ex.Message}",
+                $"Invalid GraphQL response format: {parseError.Message}",
                 BackendErrorType.InvalidResponse);
         }
 
@@ -303,14 +335,6 @@ public sealed class BackendCaller(
                 statusCode,
                 "Null GraphQL response",
                 BackendErrorType.InvalidResponse);
-        }
-
-        // Check for GraphQL errors
-        if (graphqlResponse.Errors != null && graphqlResponse.Errors.Count > 0)
-        {
-            logger.GraphQLErrorsReceived(logUrl, graphqlResponse.Errors.Count,
-                string.Join("; ", graphqlResponse.Errors.Select(e => e.Message)));
-            return GraphQLResult<TResponse>.FromGraphQLErrors(graphqlResponse.Errors, statusCode);
         }
 
         // Extract data from response
@@ -571,6 +595,27 @@ public sealed class BackendCaller(
             403 => BackendResult.AuthorizationFailure(mappedMessage),
             _ => BackendResult.Failure(mappedStatus, mappedMessage, errorType)
         };
+    }
+
+    private GraphQLResult<TResponse> MapHttpErrorToGraphQLResult<TResponse>(int statusCode, string? reasonPhrase, BackendRequest request)
+    {
+        var error = reasonPhrase ?? "Request failed";
+
+        // Same mapping the typed paths use (see MapHttpErrorToResult / DeserializeResponseAsync):
+        // the default IBackendErrorMapper maps backend 401/403 to 502 so a *backend* credential
+        // failure doesn't surface as a 401 and sign the user out.
+        var (mappedStatus, mappedMessage) = _errorMapper.MapError(statusCode, error, request);
+
+        var errorType = mappedStatus switch
+        {
+            401 => BackendErrorType.AuthenticationError,
+            403 => BackendErrorType.AuthorizationError,
+            >= 400 and < 500 => BackendErrorType.ClientError,
+            >= 500 => BackendErrorType.ServerError,
+            _ => BackendErrorType.Unknown
+        };
+
+        return GraphQLResult<TResponse>.FromBackendError(mappedStatus, mappedMessage, errorType);
     }
 
     private async Task<SendResult> SendRequestAsync<TRequest>(
