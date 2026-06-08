@@ -615,6 +615,10 @@ public sealed class BackendCallerGraphQLAndRawTests
 
         var span = Assert.Single(stopped, s =>
             (s.GetTagItem(PortaActivitySource.Tags.HttpUrl)?.ToString() ?? "").Contains("backend.test/users"));
+        // Fixed category activity name - the backend identity lives on the bff.backend.service tag,
+        // never baked into the span name (which would explode trace cardinality per backend host).
+        Assert.Equal(PortaActivitySource.Activities.BackendCall, span.OperationName);
+        Assert.Equal("backend.test", span.GetTagItem(PortaActivitySource.Tags.BackendService));
         Assert.Equal(ActivityStatusCode.Ok, span.Status);
         Assert.Equal(false, span.GetTagItem("bff.backend.refresh_retry"));
         var taggedUrl = span.GetTagItem(PortaActivitySource.Tags.HttpUrl)?.ToString() ?? "";

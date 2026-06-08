@@ -73,10 +73,12 @@ public abstract class AggregatingTransformer<TResponse> : MultiBackendTransforme
 
         var tasks = backendConfigs.Select(async config =>
         {
-            // Create child span for each backend call when telemetry is enabled
+            // Create child span for each backend call when telemetry is enabled. Fixed category
+            // activity name (bff.backend); the aggregating transformer and the specific backend are
+            // carried on tags (aggregator.transformer, bff.backend.service) so cardinality stays bounded.
             using var activity = context.TelemetryEnabled
                 ? PortaActivitySource.Source.StartActivity(
-                    $"bff.aggregator.{transformerName}.{config.Name}",
+                    PortaActivitySource.Activities.BackendCall,
                     ActivityKind.Internal)
                 : null;
 

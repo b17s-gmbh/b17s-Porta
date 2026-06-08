@@ -49,6 +49,7 @@ public static class PortaActivitySource
     {
         public const string PortaRequest = "bff.request";
         public const string Transformation = "bff.transformation";
+        public const string RawForward = "bff.raw_forward";
         public const string BackendCall = "bff.backend";
         public const string Authentication = "bff.authentication";
         public const string TokenExchange = "bff.token_exchange";

@@ -4,77 +4,82 @@ The BFF framework automatically generates OpenTelemetry traces and metrics for a
 
 ## Automatic Instrumentation
 
-When `EnableTelemetry` is true (default), the framework automatically instruments transformers, backend HTTP calls, authentication, sessions, and request lifecycles. Activities are emitted by `PortaActivitySource` (source name `b17s.Porta`) and metrics by `PortaMetrics` on the same meter name.
+When `EnableTelemetry` is true (default), the framework automatically instruments transformer and raw-forward endpoint execution, backend HTTP calls, token exchange, the session-admin endpoint, and OIDC back-channel logout. Activities are emitted by `PortaActivitySource` (source name `b17s.Porta`) and metrics by `PortaMetrics` on the same meter name.
+
+The table below lists the spans and metrics the framework **emits today**. Each activity uses a **fixed category name**; the specific transformer/backend is carried on a **tag**, never baked into the activity name (see the note below). A handful of additional instruments are declared on the source/meter but not yet recorded - see [Reserved instruments](#reserved-instruments-declared-but-not-yet-emitted).
 
 | Component | Activity name | Related metrics |
 |-----------|---------------|-----------------|
-| Incoming request lifecycle | `bff.request` | `bff.request.duration`, `bff.request.size`, `bff.response.size`, `bff.requests.active` |
 | Transformer execution | `bff.transformation` (with `bff.transformation.strategy` tag set to the transformer class name) | `bff.transformation.duration` |
+| Raw-forward execution | `bff.raw_forward` (with `bff.transformation.strategy` tag set to the transformer class name and `bff.component` = `raw_forward`) | `bff.transformation.duration` (`strategy` = `RawForward:{name}`) |
 | Backend HTTP calls | `bff.backend` (with `bff.backend.service` tag set to the service hostname) | `bff.backend.duration`, `bff.backend.requests`, `bff.backend.errors` |
-| Aggregator child spans | `bff.backend` (one per parallel backend, parented to the transformation activity) | - |
-| Authentication | `bff.authentication` | `bff.auth.duration`, `bff.auth.failures`, `bff.auth.successes` |
-| Token refresh | `bff.token_refresh` | `bff.token.refreshes`, `bff.token.refresh_failures` |
+| Aggregator child spans | `bff.backend` (one per parallel backend, `bff.component` = `aggregator`, parented to the transformation activity) | `bff.backend.duration`, `bff.backend.requests`, `bff.backend.errors` (from the inner backend call) |
 | Token exchange | `bff.token_exchange` | - |
-| Session lifecycle | `bff.session` | `bff.session.created`, `bff.session.invalidated`, `bff.sessions.active` |
+| Session-admin endpoint | `bff.session_admin` | - |
+| OIDC back-channel logout | `bff.backchannel_logout` | - |
 | Refresh-lock cleanup timer | - | `bff.session.lock_cleanup_runs`, `bff.session.stale_locks_cleaned` |
-| CSRF validation | - | `bff.csrf.validation_failures` |
-| Health checks | `bff.health_check` | - |
 
-> The literal `bff.transformer.{Name}` / `bff.backend.{ServiceName}` strings you may have seen in older revisions of this doc are *display* shapes - at runtime each span carries its category as an activity name (`bff.transformation`, `bff.backend`, etc.) plus a tag (`bff.transformation.strategy`, `bff.backend.service`) that names the specific transformer or backend. Search by tag, not by composed activity name.
+> Activity names are **fixed category strings** (`bff.transformation`, `bff.raw_forward`, `bff.backend`, …). The literal `bff.transformer.{Name}` / `bff.backend.{ServiceName}` strings you may have seen in older revisions of this doc are *display* shapes only - at runtime each span carries its category as the activity name plus a tag (`bff.transformation.strategy`, `bff.backend.service`) that names the specific transformer or backend. **Search by tag, not by composed activity name.**
+
+### Reserved instruments (declared but not yet emitted)
+
+`PortaActivitySource` and `PortaMetrics` declare a broader set of instruments than the framework currently records. The following are **defined on the source/meter but are not emitted by any production code path yet** - queries against them return no data. They are reserved for upcoming releases; do not build dashboards or alerts on them until they appear in the table above.
+
+- **Spans:** `bff.request`, `bff.authentication`, `bff.token_refresh`, `bff.session`, `bff.health_check`
+- **Metrics:** `bff.request.duration`, `bff.request.size`, `bff.response.size`, `bff.requests.active`, `bff.auth.failures`, `bff.auth.successes`, `bff.auth.duration`, `bff.token.refreshes`, `bff.token.refresh_failures`, `bff.csrf.validation_failures`, `bff.session.created`, `bff.session.invalidated`, `bff.sessions.active`
 
 ## Metric reference
 
-All counters and histograms below are emitted under the `b17s.Porta` meter. Source of truth is [`PortaMetrics.cs`](../src/Telemetry/PortaMetrics.cs) - when in doubt, read the meter declarations there.
+All counters and histograms below are declared under the `b17s.Porta` meter. Source of truth is [`PortaMetrics.cs`](../src/Telemetry/PortaMetrics.cs) - when in doubt, read the meter declarations there. The **Status** column reflects what the framework records today: `Emitted` instruments produce data; `Reserved` instruments are declared on the meter but not yet recorded by any production code path (see [Reserved instruments](#reserved-instruments-declared-but-not-yet-emitted)).
 
 ### Counters
 
-| Metric | Tags | Description |
-|--------|------|-------------|
-| `bff.auth.failures` | `reason`, `provider` (optional) | Authentication failures. |
-| `bff.auth.successes` | `provider` (optional) | Successful authentications. |
-| `bff.token.refreshes` | `reason` (optional) | Successful token refreshes at the IdP. |
-| `bff.token.refresh_failures` | `reason` (optional) | Failed token refreshes. |
-| `bff.backend.requests` | `service`, `protocol`, `status_code` | Backend HTTP requests. |
-| `bff.backend.errors` | `service`, `protocol`, `status_code` | Backend requests with `status_code >= 400`. |
-| `bff.csrf.validation_failures` | `reason` | Antiforgery/CSRF validation failures. |
-| `bff.session.created` | - | Sessions created (also increments `bff.sessions.active`). |
-| `bff.session.invalidated` | `reason` | Sessions invalidated (also decrements `bff.sessions.active`). |
-| `bff.session.lock_cleanup_runs` | - | Stale-lock cleanup timer executions. |
-| `bff.session.stale_locks_cleaned` | - | Stale per-user refresh locks reclaimed. |
+| Metric | Tags | Status | Description |
+|--------|------|--------|-------------|
+| `bff.backend.requests` | `service`, `protocol`, `status_code` | Emitted | Backend HTTP requests. |
+| `bff.backend.errors` | `service`, `protocol`, `status_code` | Emitted | Backend requests with `status_code >= 400`. |
+| `bff.session.lock_cleanup_runs` | - | Emitted | Stale-lock cleanup timer executions. |
+| `bff.session.stale_locks_cleaned` | - | Emitted | Stale per-user refresh locks reclaimed. |
+| `bff.auth.failures` | `reason`, `provider` (optional) | Reserved | Authentication failures. |
+| `bff.auth.successes` | `provider` (optional) | Reserved | Successful authentications. |
+| `bff.token.refreshes` | `reason` (optional) | Reserved | Successful token refreshes at the IdP. |
+| `bff.token.refresh_failures` | `reason` (optional) | Reserved | Failed token refreshes. |
+| `bff.csrf.validation_failures` | `reason` | Reserved | Antiforgery/CSRF validation failures. |
+| `bff.session.created` | - | Reserved | Sessions created (also increments `bff.sessions.active`). |
+| `bff.session.invalidated` | `reason` | Reserved | Sessions invalidated (also decrements `bff.sessions.active`). |
 
 ### Histograms
 
-| Metric | Unit | Tags | Description |
-|--------|------|------|-------------|
-| `bff.request.duration` | `ms` | `method`, `route`, `status_code` | End-to-end request processing time. |
-| `bff.backend.duration` | `ms` | `service`, `protocol` | Backend call duration. |
-| `bff.transformation.duration` | `ms` | `strategy` | Time spent inside the transformer's `TransformAsync`. |
-| `bff.auth.duration` | `ms` | `provider` | Time spent in `IAuthenticationProvider.GetAuthContextAsync`. |
-| `bff.request.size` | `bytes` | `method` | Incoming request body size. |
-| `bff.response.size` | `bytes` | `status_code` | Outgoing response body size. |
+| Metric | Unit | Tags | Status | Description |
+|--------|------|------|--------|-------------|
+| `bff.backend.duration` | `ms` | `service`, `protocol` | Emitted | Backend call duration. |
+| `bff.transformation.duration` | `ms` | `strategy` | Emitted | Time spent inside the transformer's `TransformAsync` (raw-forward records `strategy` = `RawForward:{name}`). |
+| `bff.request.duration` | `ms` | `method`, `route`, `status_code` | Reserved | End-to-end request processing time. |
+| `bff.auth.duration` | `ms` | `provider` | Reserved | Time spent in `IAuthenticationProvider.GetAuthContextAsync`. |
+| `bff.request.size` | `bytes` | `method` | Reserved | Incoming request body size. |
+| `bff.response.size` | `bytes` | `status_code` | Reserved | Outgoing response body size. |
 
 Latency histograms use the OpenTelemetry `http.server.request.duration`-style buckets (`0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000` ms). Size histograms cover `256 B → 256 MiB` so the `MaxBackendResponseBytes` (10 MiB) and `MaxRawForwardResponseBytes` (100 MiB) caps land in real buckets.
 
 ### UpDownCounters
 
-| Metric | Description |
-|--------|-------------|
-| `bff.sessions.active` | Active sessions. Incremented on `bff.session.created`, decremented on `bff.session.invalidated`. |
-| `bff.requests.active` | In-flight requests. |
+| Metric | Status | Description |
+|--------|--------|-------------|
+| `bff.sessions.active` | Reserved | Active sessions. Incremented on `bff.session.created`, decremented on `bff.session.invalidated`. |
+| `bff.requests.active` | Reserved | In-flight requests. |
 
 ## Span Hierarchy
 
-Activity names are the fixed category strings (`bff.request`, `bff.transformation`, `bff.backend`); the specific transformer/backend is carried on a tag, not baked into the name (see the note under [Automatic Instrumentation](#automatic-instrumentation)). The tags are shown in brackets below:
+Activity names are the fixed category strings (`bff.transformation`, `bff.backend`); the specific transformer/backend is carried on a tag, not baked into the name (see the note under [Automatic Instrumentation](#automatic-instrumentation)). Porta's top-level endpoint span (`bff.transformation` here) is parented directly under the host's ambient ASP.NET Core request activity. The tags are shown in brackets below:
 
 ```
 Incoming HTTP Request
 └── ASP.NET Core Activity (auto)
-    └── bff.request
-        └── bff.transformation            [bff.transformation.strategy = EnrichedUserProfileTransformer]
-            ├── bff.backend                [bff.backend.service = api.internal.com]
-            │   └── HTTP GET api.internal.com (auto)
-            └── bff.backend                [bff.backend.service = products.internal.com]
-                └── HTTP GET products.internal.com (auto)
+    └── bff.transformation                [bff.transformation.strategy = EnrichedUserProfileTransformer]
+        ├── bff.backend                   [bff.backend.service = api.internal.com]
+        │   └── HTTP GET api.internal.com (auto)
+        └── bff.backend                   [bff.backend.service = products.internal.com]
+            └── HTTP GET products.internal.com (auto)
 ```
 
 ## Trace Context Propagation

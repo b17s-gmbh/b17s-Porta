@@ -476,7 +476,10 @@ public sealed class TransformerEndpointBuilderFluentTests
             Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
             ActivityStopped = a =>
             {
-                if (a.OperationName == "bff.transformer.SelfWritten4xxTransformer")
+                // The span now carries a fixed category name; disambiguate from other parallel
+                // transformer tests by the bff.transformation.strategy tag, not the activity name.
+                if (a.OperationName == PortaActivitySource.Activities.Transformation
+                    && (string?)a.GetTagItem(PortaActivitySource.Tags.TransformationStrategy) == nameof(SelfWritten4xxTransformer))
                 {
                     spanStopped.TrySetResult(a);
                 }
@@ -514,6 +517,10 @@ public sealed class TransformerEndpointBuilderFluentTests
 
         Assert.Equal(403, (int)response.StatusCode);
         var span = await spanStopped.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        // Fixed category activity name - the transformer identity lives on the
+        // bff.transformation.strategy tag, never baked into the span name.
+        Assert.Equal(PortaActivitySource.Activities.Transformation, span.OperationName);
+        Assert.Equal(nameof(SelfWritten4xxTransformer), span.GetTagItem(PortaActivitySource.Tags.TransformationStrategy));
         Assert.Equal(ActivityStatusCode.Error, span.Status);
         Assert.Equal(403, span.GetTagItem(PortaActivitySource.Tags.HttpStatusCode));
     }

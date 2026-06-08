@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -5,6 +6,7 @@ using System.Text;
 using b17s.Porta.Auth.Providers;
 using b17s.Porta.Configuration;
 using b17s.Porta.Extensions;
+using b17s.Porta.Telemetry;
 using b17s.Porta.Transformers;
 
 using Microsoft.AspNetCore.Builder;
@@ -60,6 +62,38 @@ public sealed class RawForwardUrlMutationTests
 
         response.EnsureSuccessStatusCode();
         Assert.Equal("https://original.test/files/42", caller.LastRequest!.Url);
+    }
+
+    [Fact]
+    public async Task RawForward_EmitsFixedCategorySpanName_WithTransformerOnTag()
+    {
+        // The raw-forward endpoint span must use the fixed category name bff.raw_forward; the
+        // specific transformer is carried on the bff.transformation.strategy tag, never baked into
+        // the span name (which would explode trace cardinality per transformer type).
+        var stopped = new System.Collections.Concurrent.ConcurrentBag<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PortaActivitySource.Source.Name,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = stopped.Add,
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var caller = new CapturingRawBackendCaller();
+        using var bff = await CreateBffAsync<DefaultRawForwardTransformer>(caller, builder => builder
+            .FromGet("/proxy/raw-span/{id}")
+            .ToBackend("GET", "https://original.test/files/{id}")
+            .AllowAnonymous());
+        var client = bff.GetTestServer().CreateClient();
+
+        var response = await client.GetAsync("/proxy/raw-span/42", TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        // Scope to this test's own span via its unique route - the ActivitySource is process-global.
+        var span = Assert.Single(stopped, s =>
+            (s.GetTagItem(PortaActivitySource.Tags.HttpRoute)?.ToString() ?? "") == "/proxy/raw-span/{id}");
+        Assert.Equal(PortaActivitySource.Activities.RawForward, span.OperationName);
+        Assert.Equal(nameof(DefaultRawForwardTransformer), span.GetTagItem(PortaActivitySource.Tags.TransformationStrategy));
     }
 
     [Fact]

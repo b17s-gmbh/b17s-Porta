@@ -396,9 +396,11 @@ public sealed class BackendCaller(
 
         // Start telemetry activity for backend call (suppressed when telemetry is opted out; the
         // ambient reverse-proxy/host trace context still flows to the backend - see _enableTelemetry).
+        // Fixed category activity name; the specific backend is carried on the
+        // bff.backend.service tag (set below) so span cardinality stays bounded.
         using var activity = _enableTelemetry
             ? PortaActivitySource.Source.StartActivity(
-                $"{PortaActivitySource.Activities.BackendCall}.{serviceName}",
+                PortaActivitySource.Activities.BackendCall,
                 ActivityKind.Client)
             : null;
 
@@ -768,9 +770,11 @@ public sealed class BackendCaller(
         // Per-attempt span + stopwatch. Sharing one of each across the refresh-on-401 retry froze
         // the stopwatch at the first attempt's duration and let the retry's 200 overwrite the first
         // attempt's 401 on a single span, erasing the refresh from the trace.
+        // Fixed category activity name; the specific backend is carried on the
+        // bff.backend.service tag (set below) so span cardinality stays bounded.
         using var activity = _enableTelemetry
             ? PortaActivitySource.Source.StartActivity(
-                $"{PortaActivitySource.Activities.BackendCall}.{serviceName}",
+                PortaActivitySource.Activities.BackendCall,
                 ActivityKind.Client)
             : null;
 

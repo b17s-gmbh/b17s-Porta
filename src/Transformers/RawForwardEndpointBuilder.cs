@@ -235,8 +235,10 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
             var errorMapper = context.RequestServices.GetService<IBackendErrorMapper>() ?? new DefaultBackendErrorMapper();
             var metrics = enableTelemetry ? context.RequestServices.GetService<PortaMetrics>() : null;
 
+            // Fixed category activity name; the specific transformer is carried on the
+            // bff.transformation.strategy tag (set below) so span cardinality stays bounded.
             using var activity = enableTelemetry
-                ? PortaActivitySource.Source.StartActivity($"bff.raw_forward.{transformerName}", ActivityKind.Server)
+                ? PortaActivitySource.Source.StartActivity(PortaActivitySource.Activities.RawForward, ActivityKind.Server)
                 : null;
 
             var stopwatch = enableTelemetry ? Stopwatch.StartNew() : null;

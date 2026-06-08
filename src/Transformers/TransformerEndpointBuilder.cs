@@ -356,8 +356,10 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
             var backendCaller = context.RequestServices.GetRequiredService<IBackendCaller>();
             var metrics = enableTelemetry ? context.RequestServices.GetService<PortaMetrics>() : null;
 
+            // Fixed category activity name; the specific transformer is carried on the
+            // bff.transformation.strategy tag (set below) so span cardinality stays bounded.
             using var activity = enableTelemetry
-                ? PortaActivitySource.Source.StartActivity($"bff.transformer.{transformerName}", ActivityKind.Server)
+                ? PortaActivitySource.Source.StartActivity(PortaActivitySource.Activities.Transformation, ActivityKind.Server)
                 : null;
 
             var stopwatch = enableTelemetry ? Stopwatch.StartNew() : null;
