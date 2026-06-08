@@ -18,7 +18,7 @@
     @if (Model.IsAuthenticated)
     {
         <p>✅ Signed in as <strong>@Model.UserName</strong>.</p>
-        <p><a class="button" href="/bff/logout">Log out</a></p>
+        <form method="post" action="/bff/logout">@Html.AntiForgeryToken()<button class="button" type="submit">Log out</button></form>
 
         <h2>Claims</h2>
         <table>
