@@ -143,7 +143,9 @@ app.UseOidcLogout();
 app.UseOidcLogout("/auth/logout", options =>
 {
     options.ReturnJson = true;
-    options.PerformGlobalLogout = true;          // revoke at IdP (RFC 7009) + IdP end-session
+    options.PerformGlobalLogout = true;          // revoke refresh token at IdP (RFC 7009) + clear local session
+                                                 // NOTE: JSON mode does NOT end the IdP SSO session - see
+                                                 // "Global logout from a SPA" below
     options.AllowedRedirectHosts = ["app.example.com"];
     options.DefaultRedirectUri = "/";
     options.RequireAntiforgery = true;           // default; browser callers must present a token
@@ -169,8 +171,8 @@ app.UseOidcLogout("/auth/logout", options =>
 | `DefaultRedirectUri` | `/` | Used when the request omits `redirect_uri`. Validated at startup against `AllowedRedirectHosts` / `AllowLocalhost`. |
 | `AllowedRedirectHosts` | `[]` | Whitelist of accepted hosts for `redirect_uri`. Entries can be bare hostnames or `host:port`. Empty means same-origin only. |
 | `AllowLocalhost` | `false` | When `true`, loopback hosts are accepted as redirect targets even when not in `AllowedRedirectHosts`. |
-| `ReturnJson` | `false` | When `true`, return a JSON envelope instead of a redirect. |
-| `PerformGlobalLogout` | `true` | Revoke refresh token at the IdP (RFC 7009) and sign out the OIDC scheme (drives the framework to the IdP end-session endpoint). |
+| `ReturnJson` | `false` | When `true`, return a JSON envelope instead of a redirect. Note this also changes what `PerformGlobalLogout` can do — see below. |
+| `PerformGlobalLogout` | `true` | Revoke the refresh token at the IdP (RFC 7009). In **redirect mode** (`ReturnJson = false`) it *also* signs out the OIDC scheme, driving the framework to the IdP end-session endpoint and ending the IdP SSO session. In **JSON mode** (`ReturnJson = true`) it revokes the refresh token and clears the local session **only** — it does **not** end the IdP SSO session (a JSON response cannot also emit the end-session redirect). See [Global logout from a SPA](#global-logout-from-a-spa). |
 | `RequireAntiforgery` | `true` | Require a valid ASP.NET antiforgery token on the logout POST. Disable only when logout callers are non-browser (CLI, server-to-server, native app). When `true` and `IAntiforgery` is not registered, the endpoint fails closed with HTTP 403. |
 
 ### Antiforgery for browser callers
@@ -186,12 +188,43 @@ await fetch('/bff/logout', {
 });
 ```
 
-**Global logout** (the default):
+**Global logout** (the default), in **redirect mode** (`ReturnJson = false`):
 1. Revoke the refresh token at the IdP via RFC 7009 (cascades to access tokens for spec-compliant IdPs).
 2. `SignOutAsync(Cookie)` clears the cookie + ticket store.
-3. `SignOutAsync(OIDC)` lets the framework redirect to the IdP's end-session endpoint with `id_token_hint`.
+3. `SignOutAsync(OIDC)` lets the framework redirect to the IdP's end-session endpoint with `id_token_hint`. This ends the IdP SSO session, so the next login is *not* silently SSO'd.
+
+**Global logout in JSON mode** (`ReturnJson = true`): only steps 1 and 2 run. Step 3 is **skipped** — a JSON response body cannot also carry the `302` redirect the end-session flow needs. The refresh token is dead and the local BFF session is gone, but the **IdP SSO session is still alive**, so the next `/bff/login` may sign the user straight back in without a credential prompt. To end the IdP session too, the SPA must drive it — see [Global logout from a SPA](#global-logout-from-a-spa).
 
 **Local logout**: `SignOutAsync(Cookie)` only; no IdP round-trip.
+
+### Global logout from a SPA
+
+The IdP SSO session is a cookie the IdP set **in the browser**. Ending it is inherently a browser navigation — the browser has to visit the IdP's end-session endpoint so the IdP can clear that cookie. This library does not (and cannot) do that for you from a JSON response. You have two practical options:
+
+**Option A — use redirect mode for logout (recommended).** If you want true global logout, don't use `ReturnJson` for the logout call. Do a full-page navigation to the logout endpoint and let the framework handle the end-session redirect end to end:
+
+```javascript
+// Submit a POST form (so antiforgery + SameSite still apply) and let the browser follow the 302 chain
+const form = document.createElement('form');
+form.method = 'POST';
+form.action = '/bff/logout';
+// include your antiforgery token as a hidden field or header-bearing fetch+redirect as your setup requires
+document.body.appendChild(form);
+form.submit();
+```
+
+The browser ends up at the IdP end-session endpoint and then back at your `post_logout_redirect_uri`. SSO is fully cleared.
+
+**Option B — JSON logout, then navigate to the IdP yourself.** Keep `ReturnJson = true` for the local teardown (handy when the SPA wants to react to the JSON first), then send the browser to the IdP end-session endpoint:
+
+```javascript
+await fetch('/bff/logout', { method: 'POST', headers: { 'RequestVerificationToken': csrf } });
+// local session + refresh token are now gone; finish by ending the IdP session:
+window.location = 'https://auth.example.com/connect/endsession'
+    + '?post_logout_redirect_uri=' + encodeURIComponent('https://app.example.com/');
+```
+
+Caveats for Option B: the BFF holds the `id_token` server-side, so the SPA cannot supply `id_token_hint`. Without it, many IdPs still end the session but may show a "do you want to sign out?" confirmation, and the `post_logout_redirect_uri` usually must be pre-registered with the IdP. The end-session path is provider-specific (`/connect/endsession`, `/v2/logout`, `/oidc/logout`, …) — read it from the IdP's discovery document (`end_session_endpoint`). Where the confirmation prompt and `id_token_hint` matter, prefer Option A.
 
 **JSON response format:**
 ```json

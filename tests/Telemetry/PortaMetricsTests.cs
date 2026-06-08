@@ -326,11 +326,15 @@ public sealed class PortaMetricsTests
             var factory = new TestMeterFactory();
             var metrics = new PortaMetrics(factory);
 
+            // Match this harness's OWN meter by reference, not by name. Every PortaMetrics instance
+            // (including those built by other tests running in parallel) shares the meter name
+            // PortaActivitySource.ActivitySourceName, so a name filter would capture their emissions
+            // too and inflate the counts asserted here.
             var listener = new MeterListener
             {
                 InstrumentPublished = (instrument, l) =>
                 {
-                    if (instrument.Meter.Name == PortaActivitySource.ActivitySourceName)
+                    if (factory.Created.Contains(instrument.Meter))
                     {
                         l.EnableMeasurementEvents(instrument);
                     }
@@ -385,7 +389,17 @@ public sealed class PortaMetricsTests
 
     private sealed class TestMeterFactory : IMeterFactory
     {
-        public Meter Create(MeterOptions options) => new(options);
+        // Track the meters this factory hands out so the harness's listener can scope itself to
+        // them by reference (the meter NAME is shared across all PortaMetrics instances).
+        public List<Meter> Created { get; } = [];
+
+        public Meter Create(MeterOptions options)
+        {
+            var meter = new Meter(options);
+            Created.Add(meter);
+            return meter;
+        }
+
         public void Dispose() { }
     }
 }

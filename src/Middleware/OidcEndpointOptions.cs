@@ -89,9 +89,25 @@ public sealed class OidcLogoutOptions
     public bool ReturnJson { get; set; } = false;
 
     /// <summary>
-    /// Whether to perform global logout (revoke tokens at IdP) or local only.
-    /// Default: true (global logout)
+    /// Whether to perform global logout or local-session-only logout.
+    /// Default: true (global logout).
     /// </summary>
+    /// <remarks>
+    /// The exact effect depends on <see cref="ReturnJson"/>:
+    /// <list type="bullet">
+    ///   <item><b>Redirect mode</b> (<see cref="ReturnJson"/> = <c>false</c>):
+    ///     revokes the refresh token at the IdP (RFC 7009) <i>and</i> signs out the
+    ///     OIDC scheme, so the framework redirects the browser to the IdP
+    ///     end-session endpoint - this terminates the IdP SSO session too.</item>
+    ///   <item><b>JSON mode</b> (<see cref="ReturnJson"/> = <c>true</c>): revokes
+    ///     the refresh token at the IdP (RFC 7009) and clears the local BFF
+    ///     session, but does <b>not</b> end the IdP SSO session. A JSON response
+    ///     cannot also issue the <c>302</c> the end-session redirect requires, so
+    ///     the browser is never sent to the IdP. The SPA must terminate the IdP
+    ///     session itself - see the "Global logout from a SPA" guidance in
+    ///     <c>docs/oidc.md</c>.</item>
+    /// </list>
+    /// </remarks>
     public bool PerformGlobalLogout { get; set; } = true;
 
     /// <summary>
