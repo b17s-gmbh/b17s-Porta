@@ -9,6 +9,7 @@ using b17s.Porta.Transformers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -88,6 +89,85 @@ public sealed class RawForwardRequestBodyAndHeadersTests
 
         response.EnsureSuccessStatusCode();
         Assert.False(capture.LastHadContent, "A bodyless GET must not forward request content");
+    }
+
+    // -- Body-presence detection (RequestHasBody) ---------------------------------------------
+    //
+    // Regression guard for: "Raw-forward can drop HTTP/2 or HTTP/3 request bodies without
+    // Content-Length". HTTP/2 and HTTP/3 legally carry the body in DATA frames with neither a
+    // Content-Length nor a Transfer-Encoding: chunked header - the only reliable framed-body
+    // signal is the transport END_STREAM flag, surfaced as IHttpRequestBodyDetectionFeature.
+    // CanHaveBody. The detector used to look at Content-Length / chunked only, so these uploads
+    // were forwarded as bodyless requests. TestServer can't synthesize an HTTP/2 DATA-frame body
+    // that omits both framing headers, so these exercise the framing logic directly with a
+    // stubbed body-detection feature.
+
+    [Fact]
+    public void RequestHasBody_Http2FramedBody_NoContentLengthOrChunked_IsForwarded()
+    {
+        // The bug: CanHaveBody is the ONLY signal a body exists. Fails before the fix.
+        var request = BuildRequest(contentLength: null, transferEncoding: null, canHaveBody: true);
+
+        Assert.True(RawForwardEndpointBuilder<DefaultRawForwardTransformer>.RequestHasBody(request));
+    }
+
+    [Fact]
+    public void RequestHasBody_Http2NoBody_EndStreamSet_IsNotForwarded()
+    {
+        // Bodyless HTTP/2 request (e.g. GET): END_STREAM on HEADERS => CanHaveBody is false.
+        var request = BuildRequest(contentLength: null, transferEncoding: null, canHaveBody: false);
+
+        Assert.False(RawForwardEndpointBuilder<DefaultRawForwardTransformer>.RequestHasBody(request));
+    }
+
+    [Fact]
+    public void RequestHasBody_ExplicitZeroContentLength_WinsOverCanHaveBody()
+    {
+        // Content-Length: 0 is an explicit "no body" promise and must override the framing probe.
+        var request = BuildRequest(contentLength: 0, transferEncoding: null, canHaveBody: true);
+
+        Assert.False(RawForwardEndpointBuilder<DefaultRawForwardTransformer>.RequestHasBody(request));
+    }
+
+    [Fact]
+    public void RequestHasBody_PositiveContentLength_IsForwarded()
+    {
+        var request = BuildRequest(contentLength: 12, transferEncoding: null, canHaveBody: false);
+
+        Assert.True(RawForwardEndpointBuilder<DefaultRawForwardTransformer>.RequestHasBody(request));
+    }
+
+    [Fact]
+    public void RequestHasBody_ChunkedTransferEncoding_IsForwarded()
+    {
+        var request = BuildRequest(contentLength: null, transferEncoding: "chunked", canHaveBody: false);
+
+        Assert.True(RawForwardEndpointBuilder<DefaultRawForwardTransformer>.RequestHasBody(request));
+    }
+
+    private static HttpRequest BuildRequest(long? contentLength, string? transferEncoding, bool canHaveBody)
+    {
+        var context = new DefaultHttpContext();
+        context.Features.Set<IHttpRequestBodyDetectionFeature>(new StubBodyDetectionFeature(canHaveBody));
+
+        var request = context.Request;
+        request.Method = "POST";
+        if (contentLength is not null)
+        {
+            request.ContentLength = contentLength;
+        }
+
+        if (transferEncoding is not null)
+        {
+            request.Headers.TransferEncoding = transferEncoding;
+        }
+
+        return request;
+    }
+
+    private sealed class StubBodyDetectionFeature(bool canHaveBody) : IHttpRequestBodyDetectionFeature
+    {
+        public bool CanHaveBody { get; } = canHaveBody;
     }
 
     private static async Task<IHost> CreateBffAsync(

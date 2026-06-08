@@ -9,6 +9,7 @@ using b17s.Porta.Telemetry;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -299,7 +300,8 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 // Content-Length or a chunked Transfer-Encoding instead of "is the stream readable"
                 // (the inbound Body stream is always readable), so a bodyless GET never gets an empty
                 // StreamContent attached. HTTP/2 and HTTP/3 data frames do not require Content-Length
-                // or Transfer-Encoding headers, but RequestHasBody handles the framed cases too.
+                // or Transfer-Encoding headers, so RequestHasBody also consults the transport-level
+                // IHttpRequestBodyDetectionFeature.CanHaveBody to catch framed bodies.
                 if (RequestHasBody(context.Request))
                 {
                     requestBody = context.Request.Body;
@@ -664,10 +666,26 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
 
     /// <summary>
     /// Whether the incoming request carries a body that should be forwarded to the backend.
-    /// Gated on Content-Length or a chunked Transfer-Encoding rather than stream readability,
-    /// because the inbound request body stream is always readable - even for bodyless verbs.
+    /// Gated on the request framing rather than stream readability, because the inbound request
+    /// body stream is always readable - even for bodyless verbs - so probing the stream would
+    /// attach an empty <see cref="StreamContent"/> to a bodyless GET.
     /// </summary>
-    private static bool RequestHasBody(HttpRequest request)
+    /// <remarks>
+    /// Three framing signals, in order:
+    /// <list type="number">
+    /// <item><description>A positive <c>Content-Length</c> is a body.</description></item>
+    /// <item><description>A chunked <c>Transfer-Encoding</c> is a body - HTTP/1.1 streamed uploads
+    /// omit <c>Content-Length</c>.</description></item>
+    /// <item><description>HTTP/2 and HTTP/3 carry the body in DATA frames with neither header set;
+    /// the transport END_STREAM flag on the HEADERS frame is the only reliable signal, surfaced via
+    /// <see cref="IHttpRequestBodyDetectionFeature.CanHaveBody"/>. An explicit <c>Content-Length: 0</c>
+    /// overrides this and means "no body".</description></item>
+    /// </list>
+    /// Marked <c>internal</c> (not <c>private</c>) so the framing logic can be unit-tested directly
+    /// against a stubbed <see cref="IHttpRequestBodyDetectionFeature"/> - TestServer cannot synthesize
+    /// an HTTP/2 DATA-frame body that omits both Content-Length and Transfer-Encoding.
+    /// </remarks>
+    internal static bool RequestHasBody(HttpRequest request)
     {
         if (request.ContentLength is > 0)
         {
@@ -676,8 +694,22 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
 
         // Chunked uploads omit Content-Length; detect them via Transfer-Encoding: chunked.
         var transferEncoding = request.Headers.TransferEncoding;
-        return transferEncoding.Count > 0
-            && transferEncoding.Any(v => v != null && v.Contains("chunked", StringComparison.OrdinalIgnoreCase));
+        if (transferEncoding.Count > 0
+            && transferEncoding.Any(v => v != null && v.Contains("chunked", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        // A client that explicitly declared Content-Length: 0 promised no body - honour that rather
+        // than falling through to the HTTP/2/3 framing probe, which would otherwise allow one.
+        if (request.ContentLength is 0)
+        {
+            return false;
+        }
+
+        // HTTP/2 / HTTP/3 DATA-frame bodies carry neither Content-Length nor Transfer-Encoding.
+        // CanHaveBody reflects the transport END_STREAM flag - the only reliable framed-body signal.
+        return request.HttpContext.Features.Get<IHttpRequestBodyDetectionFeature>()?.CanHaveBody ?? false;
     }
 
     private static bool ShouldForwardClientHeader(
