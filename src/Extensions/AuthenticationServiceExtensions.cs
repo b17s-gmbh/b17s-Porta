@@ -21,6 +21,8 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
+using Polly;
+
 namespace b17s.Porta.Extensions;
 
 /// <summary>
@@ -504,23 +506,7 @@ public static class AuthenticationServiceExtensions
         {
             // Configure resilience based on configuration
             var config = sp.GetRequiredService<IOptions<SessionAuthenticationConfiguration>>().Value;
-            options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(config.Resilience.RequestTimeoutSeconds);
-            options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(config.Resilience.RequestTimeoutSeconds * 2);
-
-            if (config.Resilience.EnableRetry)
-            {
-                options.Retry.MaxRetryAttempts = config.Resilience.MaxRetryAttempts;
-                options.Retry.Delay = TimeSpan.FromSeconds(config.Resilience.InitialDelaySeconds);
-                options.Retry.UseJitter = config.Resilience.UseJitter;
-            }
-
-            if (config.Resilience.EnableCircuitBreaker)
-            {
-                options.CircuitBreaker.FailureRatio = config.Resilience.CircuitBreakerFailureRatio;
-                options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(config.Resilience.CircuitBreakerSamplingDurationSeconds);
-                options.CircuitBreaker.MinimumThroughput = config.Resilience.CircuitBreakerMinimumThroughput;
-                options.CircuitBreaker.BreakDuration = TimeSpan.FromSeconds(config.Resilience.CircuitBreakerBreakDurationSeconds);
-            }
+            ConfigureTokenResilience(options, config.Resilience);
         });
 
         // PortaCoreOptions is also registered by AddPortaCore; ensure the options
@@ -554,6 +540,56 @@ public static class AuthenticationServiceExtensions
             ticketStore: sp.GetService<Microsoft.AspNetCore.Authentication.Cookies.ITicketStore>()));
 
         return services;
+    }
+
+    /// <summary>
+    /// Applies <see cref="TokenRefreshResilienceConfiguration"/> onto the standard
+    /// resilience pipeline used by the token <see cref="HttpClient"/>.
+    /// </summary>
+    /// <remarks>
+    /// <c>AddStandardResilienceHandler</c> installs a full pipeline (retry +
+    /// circuit breaker + timeouts) whose strategies are always present. The
+    /// <see cref="TokenRefreshResilienceConfiguration.EnableRetry"/> and
+    /// <see cref="TokenRefreshResilienceConfiguration.EnableCircuitBreaker"/>
+    /// flags therefore cannot remove a strategy - they must neutralize it. When a
+    /// flag is <c>false</c> we explicitly disable that strategy (zero retry
+    /// attempts; a circuit-breaker predicate that never trips) so the documented
+    /// opt-out actually takes effect instead of silently leaving the package
+    /// defaults active.
+    /// </remarks>
+    internal static void ConfigureTokenResilience(
+        HttpStandardResilienceOptions options,
+        TokenRefreshResilienceConfiguration resilience)
+    {
+        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(resilience.RequestTimeoutSeconds);
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(resilience.RequestTimeoutSeconds * 2);
+
+        if (resilience.EnableRetry)
+        {
+            options.Retry.MaxRetryAttempts = resilience.MaxRetryAttempts;
+            options.Retry.Delay = TimeSpan.FromSeconds(resilience.InitialDelaySeconds);
+            options.Retry.UseJitter = resilience.UseJitter;
+        }
+        else
+        {
+            // No retry strategy can be removed from the standard pipeline, so make
+            // it a no-op: zero attempts means the request is sent exactly once.
+            options.Retry.MaxRetryAttempts = 0;
+        }
+
+        if (resilience.EnableCircuitBreaker)
+        {
+            options.CircuitBreaker.FailureRatio = resilience.CircuitBreakerFailureRatio;
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(resilience.CircuitBreakerSamplingDurationSeconds);
+            options.CircuitBreaker.MinimumThroughput = resilience.CircuitBreakerMinimumThroughput;
+            options.CircuitBreaker.BreakDuration = TimeSpan.FromSeconds(resilience.CircuitBreakerBreakDurationSeconds);
+        }
+        else
+        {
+            // The circuit breaker cannot be removed either; a predicate that never
+            // considers any outcome a failure keeps the circuit permanently closed.
+            options.CircuitBreaker.ShouldHandle = static _ => PredicateResult.False();
+        }
     }
 
     /// <summary>
