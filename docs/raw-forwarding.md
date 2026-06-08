@@ -173,9 +173,12 @@ To prevent leaking the BFF's session cookie or client credentials to backends, r
 
 - `Cookie`, `Set-Cookie`
 - `Authorization`
+- `Forwarded` (the standard RFC 7239 header)
 - `X-Forwarded-*` (any header starting with this prefix)
 
 Standard hop-by-hop headers (`Connection`, `Host`, `Transfer-Encoding`, etc.) are also stripped. The BFF's session cookie should never reach a backend; the backend should only see access tokens issued via `WithBackendAuth(...)`.
+
+The forwarding-metadata headers (`Forwarded`, `X-Forwarded-*`) are stripped because a client can spoof them: a backend (or its forwarded-header middleware) that trusts them would otherwise see an attacker-chosen client IP, host, or scheme. See [Trusting a Front Reverse Proxy](#trusting-a-front-reverse-proxy) below to relay them when the BFF genuinely sits behind one.
 
 `Content-Length` and `Transfer-Encoding` are additionally stripped from the *outbound request* - `StreamContent` will re-assert the correct framing for the body the BFF actually sends. Carrying the inbound values forward would create a request-smuggling primitive (CL.TE / CL.CL) where the BFF and backend disagree on where the request ends. Response-side `Content-Length` is left intact and flows back to the client normally.
 
@@ -261,3 +264,25 @@ builder.Services.AddPortaCore(opts =>
 ```
 
 A per-endpoint `AllowForwardingHeaders()` call replaces the global defaults for that endpoint.
+
+### Trusting a Front Reverse Proxy
+
+When the BFF itself sits behind a reverse proxy (nginx, an ingress controller, a load balancer), that proxy legitimately sets `Forwarded` / `X-Forwarded-*` describing the *real* client, and backends often need that chain intact. Stripping these headers unconditionally (see above) would break that.
+
+List the proxy's address (or CIDR range) in `TrustedForwardingProxies`. When the **inbound connection's remote IP** matches, the forwarding-metadata headers (`Forwarded` and the `X-Forwarded-*` family) are relayed to the backend instead of being stripped. A request from any other source still has them stripped, so a direct client cannot spoof them:
+
+```csharp
+builder.Services.AddPortaCore(opts =>
+{
+    // Single proxy address, or a CIDR range for a pool of proxies.
+    opts.DefaultRawForwardHeaderPassThrough.TrustedForwardingProxies.Add("10.0.0.5");
+    opts.DefaultRawForwardHeaderPassThrough.TrustedForwardingProxies.Add("10.0.0.0/8");
+});
+```
+
+Notes:
+
+- Entries may be single IPs (`10.0.0.5`, `::1`) or CIDR ranges (`10.0.0.0/8`, `fd00::/8`). IPv4-mapped IPv6 peers (`::ffff:10.0.0.5`, the form Kestrel reports on a dual-stack socket) are normalized before matching, so an IPv4 entry still matches.
+- This gate covers **only** the forwarding-metadata family. `Cookie`, `Set-Cookie`, and `Authorization` are never unlocked by proxy trust — opt those in explicitly with `AllowForwardingHeaders(...)` / `AllowedHeaders` if a trusted backend truly needs them.
+- The remote IP is the *immediate* TCP peer. If multiple proxy hops sit in front of the BFF, trust the hop that actually connects to it.
+- **Security:** any host listed here is fully trusted to dictate the forwarded client IP, host, and scheme. Keep the list as narrow as the deployment allows; never list a broad public range.

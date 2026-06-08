@@ -167,10 +167,15 @@ public sealed class PortaCoreOptions
 
     /// <summary>
     /// Default raw-forward header pass-through allow-list applied when an endpoint does not
-    /// configure its own allow-list. By default, the BFF strips Cookie, Authorization, and
-    /// X-Forwarded-* headers (plus standard hop-by-hop headers) from raw-forwarded requests
-    /// to prevent leaking the BFF session cookie or client credentials to backends. Add
-    /// header names here (case-insensitive) to opt them back in globally.
+    /// configure its own allow-list. By default, the BFF strips Cookie, Authorization, the
+    /// standard <c>Forwarded</c> header, and the <c>X-Forwarded-*</c> family (plus standard
+    /// hop-by-hop headers) from raw-forwarded requests to prevent leaking the BFF session
+    /// cookie or client credentials to backends, and to stop clients spoofing the forwarded
+    /// client IP / host / scheme. Add header names to
+    /// <see cref="RawForwardHeaderPassThrough.AllowedHeaders"/> (case-insensitive) to opt them
+    /// back in globally, or list trusted front proxies in
+    /// <see cref="RawForwardHeaderPassThrough.TrustedForwardingProxies"/> to relay the
+    /// forwarding-metadata headers only when the request arrives from a real reverse proxy.
     /// </summary>
     public RawForwardHeaderPassThrough DefaultRawForwardHeaderPassThrough { get; set; } = new();
 }

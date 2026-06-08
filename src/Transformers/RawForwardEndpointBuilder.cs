@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 
 using b17s.Porta.Auth.Providers;
 using b17s.Porta.Configuration;
@@ -316,6 +317,10 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                     destinationHost = destUri.Host;
                 }
 
+                // The inbound peer's IP gates whether spoofable Forwarded / X-Forwarded-* metadata
+                // is trusted enough to relay onward (only reverse proxies in TrustedForwardingProxies).
+                var remoteIp = context.Connection.RemoteIpAddress;
+
                 // Copy headers from incoming request, stripping sensitive headers unless explicitly
                 // allowed. Entity (content) headers are split off into contentHeaders: the request-
                 // headers collection silently rejects them, so they must be lifted onto the forwarded
@@ -323,7 +328,7 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 var contentHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var (key, value) in transformerContext.RequestHeaders)
                 {
-                    if (!ShouldForwardClientHeader(key, destinationHost, headerPassThrough))
+                    if (!ShouldForwardClientHeader(key, destinationHost, remoteIp, headerPassThrough))
                     {
                         continue;
                     }
@@ -366,7 +371,7 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 {
                     foreach (var (key, _) in transformerContext.RequestHeaders)
                     {
-                        if (tempRequest.Headers.Contains(key) && !ShouldForwardClientHeader(key, finalHost, headerPassThrough))
+                        if (tempRequest.Headers.Contains(key) && !ShouldForwardClientHeader(key, finalHost, remoteIp, headerPassThrough))
                         {
                             tempRequest.Headers.Remove(key);
                         }
@@ -678,8 +683,9 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
     private static bool ShouldForwardClientHeader(
         string headerName,
         string? destinationHost,
+        IPAddress? remoteIp,
         RawForwardHeaderPassThrough passThrough)
-        => RawForwardHeaderFilter.ShouldForwardClientHeader(headerName, destinationHost, passThrough);
+        => RawForwardHeaderFilter.ShouldForwardClientHeader(headerName, destinationHost, remoteIp, passThrough);
 
     private static bool ShouldForwardBackendResponseHeader(
         string headerName,
@@ -745,7 +751,58 @@ internal static class RawForwardHeaderFilter
         return headerName.Equals("Cookie", StringComparison.OrdinalIgnoreCase) ||
                headerName.Equals("Set-Cookie", StringComparison.OrdinalIgnoreCase) ||
                headerName.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
+               IsForwardingHeader(headerName);
+    }
+
+    /// <summary>
+    /// Forwarding-metadata headers that let an upstream peer claim the original client IP,
+    /// host, or scheme: the standard <c>Forwarded</c> header (RFC 7239) and the de-facto
+    /// <c>X-Forwarded-*</c> family. A malicious client can spoof these, so raw-forward strips
+    /// them by default. They are honoured only when the inbound connection originates from a
+    /// configured reverse proxy (see <see cref="RawForwardHeaderPassThrough.TrustedForwardingProxies"/>)
+    /// or when explicitly opted in via <see cref="RawForwardHeaderPassThrough.AllowedHeaders"/>.
+    /// </summary>
+    public static bool IsForwardingHeader(string headerName)
+    {
+        return headerName.Equals("Forwarded", StringComparison.OrdinalIgnoreCase) ||
                headerName.StartsWith("X-Forwarded-", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Whether the inbound connection's remote IP belongs to a configured trusted reverse
+    /// proxy, in which case its <c>Forwarded</c> / <c>X-Forwarded-*</c> headers may be relayed
+    /// to the backend. Entries may be plain IP addresses (<c>"10.0.0.5"</c>) or CIDR ranges
+    /// (<c>"10.0.0.0/8"</c>). IPv4-mapped IPv6 remote addresses (e.g. <c>"::ffff:10.0.0.5"</c>,
+    /// the form Kestrel reports for a dual-stack socket) are normalized before comparison so
+    /// that an IPv4 entry still matches.
+    /// </summary>
+    public static bool IsTrustedForwardingProxy(IPAddress? remoteIp, IReadOnlyCollection<string> trustedProxies)
+    {
+        if (remoteIp is null || trustedProxies.Count == 0)
+        {
+            return false;
+        }
+
+        var normalized = remoteIp.IsIPv4MappedToIPv6 ? remoteIp.MapToIPv4() : remoteIp;
+
+        foreach (var entry in trustedProxies)
+        {
+            if (entry.Contains('/'))
+            {
+                if (IPNetwork.TryParse(entry, out var network) &&
+                    (network.Contains(normalized) || network.Contains(remoteIp)))
+                {
+                    return true;
+                }
+            }
+            else if (IPAddress.TryParse(entry, out var candidate) &&
+                     (candidate.Equals(normalized) || candidate.Equals(remoteIp)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -787,6 +844,7 @@ internal static class RawForwardHeaderFilter
     public static bool ShouldForwardClientHeader(
         string headerName,
         string? destinationHost,
+        IPAddress? remoteIp,
         RawForwardHeaderPassThrough passThrough)
     {
         if (IsHopByHopHeader(headerName))
@@ -799,7 +857,9 @@ internal static class RawForwardHeaderFilter
             return false;
         }
 
-        if (IsSensitiveClientHeader(headerName) && !IsHeaderAllowed(headerName, destinationHost, passThrough))
+        if (IsSensitiveClientHeader(headerName) &&
+            !IsHeaderAllowed(headerName, destinationHost, passThrough) &&
+            !(IsForwardingHeader(headerName) && IsTrustedForwardingProxy(remoteIp, passThrough.TrustedForwardingProxies)))
         {
             return false;
         }
