@@ -254,8 +254,9 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
 
             try
             {
-                // Get authentication context
-                var authContext = await authProvider.GetAuthContextAsync(context, context.RequestAborted);
+                // Get authentication context (records the bff.authentication span + bff.auth.* metrics)
+                var authContext = await AuthInstrumentation.ResolveAsync(
+                    authProvider, context, allowOptional: !enforceUserIdentity, metrics, enableTelemetry);
 
                 // Build transformer context
                 var transformerContext = new TransformerContext

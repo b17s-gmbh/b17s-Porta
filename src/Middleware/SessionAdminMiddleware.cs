@@ -172,6 +172,7 @@ public sealed class SessionAdminMiddleware(
         catch (AntiforgeryValidationException ex)
         {
             logger.AntiforgeryValidationFailed(ex.Message);
+            context.RequestServices.GetService<PortaMetrics>()?.RecordCsrfValidationFailure("session_admin");
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsJsonAsync(new { error = "Antiforgery validation failed" }, context.RequestAborted);
             return false;
@@ -257,7 +258,7 @@ public sealed class SessionAdminMiddleware(
 
         var admin = GetCallerSubject(context.User);
         logger.AdminTerminatingSessionsByEmail(admin, email, revokeTokens);
-        var terminatedCount = await sessionManagement.TerminateSessionsByEmailAsync(email, revokeTokens, context.RequestAborted);
+        var terminatedCount = await sessionManagement.TerminateSessionsByEmailAsync(email, revokeTokens, context.RequestAborted, reason: "admin");
 
         logger.AdminSessionsTerminated(admin, terminatedCount, email);
         await context.Response.WriteAsJsonAsync(new
@@ -276,7 +277,7 @@ public sealed class SessionAdminMiddleware(
         var admin = GetCallerSubject(context.User);
         var redactedSessionId = LogRedaction.RedactSessionId(sessionId);
         logger.AdminTerminatingSession(admin, redactedSessionId, revokeTokens);
-        var success = await sessionManagement.TerminateSessionAsync(sessionId, revokeTokens, context.RequestAborted);
+        var success = await sessionManagement.TerminateSessionAsync(sessionId, revokeTokens, context.RequestAborted, reason: "admin");
 
         if (success)
         {

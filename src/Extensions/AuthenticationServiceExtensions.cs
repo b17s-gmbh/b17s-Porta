@@ -537,7 +537,8 @@ public static class AuthenticationServiceExtensions
             sp.GetRequiredService<IRefreshLock>(),
             sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PortaCoreOptions>>(),
             sessionManagement: sp.GetService<ISessionManagementService>(),
-            ticketStore: sp.GetService<Microsoft.AspNetCore.Authentication.Cookies.ITicketStore>()));
+            ticketStore: sp.GetService<Microsoft.AspNetCore.Authentication.Cookies.ITicketStore>(),
+            metrics: sp.GetService<b17s.Porta.Telemetry.PortaMetrics>()));
 
         return services;
     }

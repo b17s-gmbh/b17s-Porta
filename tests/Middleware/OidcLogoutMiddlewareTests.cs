@@ -234,6 +234,103 @@ public class OidcLogoutMiddlewareTests
         Assert.Equal(0, revocation.Calls);
     }
 
+    [Fact]
+    public async Task InvokeAsync_AntiforgeryRejects_RecordsCsrfValidationFailureMetric()
+    {
+        using var harness = b17s.Porta.Tests.Telemetry.RecordingMetricsHarness.Create();
+        var fakeAuth = new FakeAuthService(authenticated: true, refreshToken: "rt-1");
+        var revocation = new RecordingRevocationService();
+        var antiforgery = new RecordingAntiforgery(succeed: false);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IAuthenticationService>(fakeAuth);
+        services.AddSingleton<IAntiforgery>(antiforgery);
+        services.AddSingleton(harness.Metrics);
+
+        var options = Options.Create(new OidcLogoutOptions
+        {
+            ReturnJson = true,
+            PerformGlobalLogout = true,
+            DefaultRedirectUri = "/",
+            RequireAntiforgery = true,
+        });
+        var middleware = new OidcLogoutMiddleware(
+            _ => Task.CompletedTask,
+            options,
+            NullLogger<OidcLogoutMiddleware>.Instance,
+            "/bff/logout");
+
+        var httpContext = TestFixtures.CreateHttpContext(method: "POST", path: "/bff/logout");
+        httpContext.RequestServices = services.BuildServiceProvider();
+
+        await middleware.InvokeAsync(httpContext, revocation);
+
+        Assert.Equal(403, httpContext.Response.StatusCode);
+        var failures = harness.Drain("bff.csrf.validation_failures");
+        Assert.Single(failures);
+        Assert.Equal("oidc_logout", failures[0].Tags["reason"]);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_Logout_TerminatesServerSession_WithLogoutReason()
+    {
+        // The cookie sign-out clears the auth ticket, but the Porta session metadata + active gauge
+        // are only torn down if logout also terminates the server-side session. Verify it does, with
+        // revokeTokens=false (this middleware already performs RFC 7009 revocation itself).
+        var fakeAuth = new FakeAuthService(authenticated: true, refreshToken: "rt-1");
+        var revocation = new RecordingRevocationService();
+        var sessions = new RecordingSessionManagement();
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IAuthenticationService>(fakeAuth);
+        services.AddSingleton<b17s.Porta.Auth.Sessions.ISessionManagementService>(sessions);
+
+        var options = Options.Create(new OidcLogoutOptions
+        {
+            ReturnJson = true,
+            PerformGlobalLogout = false,
+            DefaultRedirectUri = "/",
+            RequireAntiforgery = false,
+        });
+        var middleware = new OidcLogoutMiddleware(
+            _ => Task.CompletedTask,
+            options,
+            NullLogger<OidcLogoutMiddleware>.Instance,
+            "/bff/logout");
+
+        var httpContext = TestFixtures.CreateHttpContext(method: "POST", path: "/bff/logout");
+        httpContext.RequestServices = services.BuildServiceProvider();
+
+        await middleware.InvokeAsync(httpContext, revocation);
+
+        Assert.Equal("sid-logout-test", sessions.LastTerminatedSessionId);
+        Assert.Equal("logout", sessions.LastReason);
+        Assert.False(sessions.LastRevokeTokens);
+    }
+
+    private sealed class RecordingSessionManagement : b17s.Porta.Auth.Sessions.ISessionManagementService
+    {
+        public string? LastTerminatedSessionId { get; private set; }
+        public string? LastReason { get; private set; }
+        public bool? LastRevokeTokens { get; private set; }
+
+        public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
+        {
+            LastTerminatedSessionId = sessionId;
+            LastRevokeTokens = revokeTokens;
+            LastReason = reason;
+            return Task.FromResult(true);
+        }
+
+        public Task RegisterSessionAsync(string sessionId, string userId, string? email = null, string? ipAddress = null, string? userAgent = null, string? encryptedRefreshToken = null) => Task.CompletedTask;
+        public Task UpdateRefreshTokenAsync(string sessionId, string? encryptedRefreshToken) => Task.CompletedTask;
+        public string? ProtectRefreshToken(string? refreshToken) => refreshToken;
+        public Task<IReadOnlyList<b17s.Porta.Auth.Sessions.SessionInfo>> GetSessionsByEmailAsync(string email, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<b17s.Porta.Auth.Sessions.SessionInfo>>([]);
+        public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified") => Task.FromResult(0);
+        public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified") => Task.FromResult(0);
+        public Task TouchSessionAsync(string sessionId) => Task.CompletedTask;
+    }
+
     private static (OidcLogoutMiddleware middleware, HttpContext context, FakeAuthService fakeAuth, RecordingRevocationService revocation) CreateScenario(
         string redirectUri,
         bool authenticated,
@@ -286,6 +383,9 @@ public class OidcLogoutMiddlewareTests
             var principal = new ClaimsPrincipal(identity);
             var properties = new AuthenticationProperties();
             properties.StoreTokens([new() { Name = "refresh_token", Value = refreshToken ?? "" }]);
+            // Mirror the session-id the OIDC handler stamps onto the ticket at sign-in, so the
+            // logout path can terminate the matching server-side session for gauge balance.
+            properties.Items[".bff.session_id"] = "sid-logout-test";
             return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, properties, scheme)));
         }
 

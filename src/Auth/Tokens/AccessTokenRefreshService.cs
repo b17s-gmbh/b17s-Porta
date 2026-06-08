@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Security.Claims;
 
 using b17s.Porta.Auth.Sessions;
 using b17s.Porta.Configuration;
+using b17s.Porta.Telemetry;
 
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -36,6 +38,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
     private readonly ITicketStore? _ticketStore;
     private readonly ILogger<AccessTokenRefreshService> _logger;
     private readonly IRefreshLock _refreshLock;
+    private readonly PortaMetrics? _metrics;
     private readonly TimeSpan _refreshSkew;
     private readonly TimeProvider _timeProvider;
 
@@ -47,6 +50,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         IOptions<PortaCoreOptions> coreOptions,
         ISessionManagementService? sessionManagement = null,
         ITicketStore? ticketStore = null,
+        PortaMetrics? metrics = null,
         TimeProvider? timeProvider = null)
     {
         _refreshService = refreshService;
@@ -55,6 +59,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         _ticketStore = ticketStore;
         _logger = logger;
         _refreshLock = refreshLock;
+        _metrics = metrics;
         _refreshSkew = coreOptions.Value.TokenRefreshSkew;
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
@@ -223,6 +228,12 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
     /// </summary>
     private async Task<string?> PerformRefreshAsync(HttpContext context, ClaimsPrincipal principal, AuthenticationProperties properties, string freshRefreshToken, string? fallback)
     {
+        // One span per actual IdP refresh grant. The specific outcome is carried on the span status
+        // and the bff.token.refreshes / bff.token.refresh_failures counters (reason tag), not the name.
+        using var activity = PortaActivitySource.Source.StartActivity(
+            PortaActivitySource.Activities.TokenRefresh, ActivityKind.Client);
+        activity?.SetTag(PortaActivitySource.Tags.Component, "token_refresh");
+
         // Thread the inbound request's cancellation so a hung IdP cannot block this refresh
         // indefinitely (and exceed the refresh-lock TTL). The token client also has its own
         // explicit timeout / resilience pipeline (see AddTokenServices) as a backstop.
@@ -236,6 +247,8 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
                 // the API tokens derived from this session - rather than serving the stale access
                 // token until it too expires, which would let a revoked session keep working.
                 _logger.RefreshInvalidGrantSignedOut();
+                _metrics?.RecordTokenRefresh(success: false, reason: "invalid_grant");
+                activity?.SetStatus(ActivityStatusCode.Error, "invalid_grant");
                 await _apiTokenService.InvalidateApiTokensAsync(context);
                 await context.SignOutAsync(CookieScheme);
                 return null;
@@ -243,6 +256,8 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
 
             // Transient failure: keep serving the current token; a later request will retry.
             _logger.RefreshFailedReturningStale();
+            _metrics?.RecordTokenRefresh(success: false, reason: "transient");
+            activity?.SetStatus(ActivityStatusCode.Error, "transient");
             return fallback;
         }
 
@@ -285,6 +300,8 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         }
 
         _logger.AccessTokenRefreshed(response.ExpiresIn);
+        _metrics?.RecordTokenRefresh(success: true);
+        activity?.SetStatus(ActivityStatusCode.Ok);
         return response.AccessToken;
     }
 

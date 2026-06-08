@@ -1,4 +1,6 @@
+using b17s.Porta.Auth.Sessions;
 using b17s.Porta.Auth.Tokens;
+using b17s.Porta.Telemetry;
 
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
@@ -86,6 +88,13 @@ public sealed class OidcLogoutMiddleware(
             tokensRevoked = await TryRevokeTokensAsync(auth, tokenRevocationService, context.RequestAborted);
         }
 
+        // Tear down the server-side Porta session metadata for this login and record the
+        // invalidation (decrementing bff.sessions.active). The cookie/OIDC sign-out below clears the
+        // auth ticket + client cookie, but not the Porta metadata/admin indexes - terminating here
+        // keeps the active-sessions gauge balanced against RegisterSessionAsync and removes the
+        // now-defunct session from admin "who's logged in" queries.
+        await TerminateServerSessionAsync(context, auth);
+
         if (_options.ReturnJson)
         {
             // SPA-style: tear down the cookie and return JSON for the client to
@@ -168,9 +177,34 @@ public sealed class OidcLogoutMiddleware(
         catch (AntiforgeryValidationException ex)
         {
             logger.LogoutAntiforgeryValidationFailed(ex.Message);
+            context.RequestServices.GetService<PortaMetrics>()?.RecordCsrfValidationFailure("oidc_logout");
             context.Response.StatusCode = StatusCodes.Status403Forbidden;
             await context.Response.WriteAsJsonAsync(new { error = "Antiforgery validation failed" }, context.RequestAborted);
             return false;
+        }
+    }
+
+    // Mirror of the session-id key written onto the cookie ticket at sign-in
+    // (AuthenticationServiceExtensions.OnTokenValidated). Used to terminate the matching Porta
+    // session metadata on logout. Kept private/local, consistent with the other call sites.
+    private const string SessionIdPropertyKey = ".bff.session_id";
+
+    private static async Task TerminateServerSessionAsync(HttpContext context, AuthenticateResult auth)
+    {
+        var sessionManagement = context.RequestServices.GetService<ISessionManagementService>();
+        if (sessionManagement is null)
+        {
+            // Session management isn't wired (e.g. cookie-only setups without admin/back-channel
+            // logout). Nothing server-side to tear down; the cookie sign-out below still applies.
+            return;
+        }
+
+        if (auth.Properties?.Items.TryGetValue(SessionIdPropertyKey, out var sessionId) == true
+            && !string.IsNullOrEmpty(sessionId))
+        {
+            // revokeTokens: false - this middleware already performed RFC 7009 revocation above when
+            // PerformGlobalLogout is set, so we must not trigger a second revoke round-trip here.
+            await sessionManagement.TerminateSessionAsync(sessionId, revokeTokens: false, context.RequestAborted, reason: "logout");
         }
     }
 

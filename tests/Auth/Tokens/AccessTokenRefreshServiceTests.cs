@@ -6,6 +6,7 @@ using b17s.Porta.Auth.Sessions;
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
 using b17s.Porta.Telemetry;
+using b17s.Porta.Tests.Telemetry;
 
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -187,6 +188,51 @@ public class AccessTokenRefreshServiceTests
         Assert.Equal("stale-access", token);
         Assert.Equal(1, ctx.RefreshCalls);
         Assert.Equal(0, ctx.SignInCalls);
+    }
+
+    [Fact]
+    public async Task SuccessfulRefresh_RecordsTokenRefreshSuccess()
+    {
+        using var harness = RecordingMetricsHarness.Create();
+        using var ctx = new TestContext(metricsOverride: harness.Metrics)
+        {
+            AccessToken = "stale-access",
+            RefreshToken = "rt",
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5),
+            RefreshResult = new TokenExchangeResponse
+            {
+                AccessToken = "new-access",
+                RefreshToken = "new-rt",
+                ExpiresIn = 3600,
+                TokenType = "Bearer",
+            },
+        };
+
+        await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+
+        Assert.Single(harness.Drain("bff.token.refreshes"));
+        Assert.Empty(harness.Drain("bff.token.refresh_failures"));
+    }
+
+    [Fact]
+    public async Task InvalidGrantRefresh_RecordsTokenRefreshFailure_WithReason()
+    {
+        using var harness = RecordingMetricsHarness.Create();
+        using var ctx = new TestContext(metricsOverride: harness.Metrics)
+        {
+            AccessToken = "stale-access",
+            RefreshToken = "rt",
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5),
+            RefreshResult = null,
+            RefreshFailure = RefreshFailureReason.InvalidGrant,
+        };
+
+        await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+
+        var failures = harness.Drain("bff.token.refresh_failures");
+        Assert.Single(failures);
+        Assert.Equal("invalid_grant", failures[0].Tags["reason"]);
+        Assert.Empty(harness.Drain("bff.token.refreshes"));
     }
 
     [Fact]
@@ -392,7 +438,7 @@ public class AccessTokenRefreshServiceTests
         public AccessTokenRefreshService Service { get; }
         public HttpContext HttpContext { get; }
 
-        public TestContext(IRefreshLock? refreshLockOverride = null)
+        public TestContext(IRefreshLock? refreshLockOverride = null, PortaMetrics? metricsOverride = null)
         {
             var fakeAuth = new FakeAuthenticationService(this);
             var refreshService = new StubTokenRefreshService(this);
@@ -408,7 +454,7 @@ public class AccessTokenRefreshServiceTests
             services.AddSingleton<IAuthenticationHandlerProvider, NullHandlerProvider>();
             HttpContext = new DefaultHttpContext { RequestServices = services.BuildServiceProvider() };
 
-            var metrics = new PortaMetrics(new TestMeterFactory());
+            var metrics = metricsOverride ?? new PortaMetrics(new TestMeterFactory());
             LockRegistry = new RefreshLockRegistry(metrics);
             Service = new AccessTokenRefreshService(
                 refreshService,
@@ -416,7 +462,8 @@ public class AccessTokenRefreshServiceTests
                 NullLogger<AccessTokenRefreshService>.Instance,
                 refreshLockOverride ?? LockRegistry,
                 Microsoft.Extensions.Options.Options.Create(new PortaCoreOptions()),
-                sessionManagement: Sessions);
+                sessionManagement: Sessions,
+                metrics: metrics);
         }
 
         public RefreshLockRegistry LockRegistry { get; }
@@ -530,13 +577,13 @@ public class AccessTokenRefreshServiceTests
             public Task<IReadOnlyList<SessionInfo>> GetSessionsByEmailAsync(string email, CancellationToken cancellationToken = default)
                 => Task.FromResult<IReadOnlyList<SessionInfo>>(Array.Empty<SessionInfo>());
 
-            public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default)
+            public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
                 => Task.FromResult(false);
 
-            public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default)
+            public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
                 => Task.FromResult(0);
 
-            public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default)
+            public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
                 => Task.FromResult(0);
 
             public Task TouchSessionAsync(string sessionId) => Task.CompletedTask;

@@ -147,12 +147,12 @@ public sealed class OidcEndToEndTests : IDisposable
             => inner.ProtectRefreshToken(refreshToken);
         public Task<IReadOnlyList<SessionInfo>> GetSessionsByEmailAsync(string email, CancellationToken cancellationToken = default)
             => inner.GetSessionsByEmailAsync(email, cancellationToken);
-        public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default)
-            => inner.TerminateSessionAsync(sessionId, revokeTokens, cancellationToken);
-        public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default)
-            => inner.TerminateSessionsByEmailAsync(email, revokeTokens, cancellationToken);
-        public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default)
-            => inner.TerminateSessionsBySubjectAsync(subject, revokeTokens, cancellationToken);
+        public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
+            => inner.TerminateSessionAsync(sessionId, revokeTokens, cancellationToken, reason);
+        public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
+            => inner.TerminateSessionsByEmailAsync(email, revokeTokens, cancellationToken, reason);
+        public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
+            => inner.TerminateSessionsBySubjectAsync(subject, revokeTokens, cancellationToken, reason);
         public Task TouchSessionAsync(string sessionId)
             => inner.TouchSessionAsync(sessionId);
     }

@@ -199,7 +199,7 @@ public sealed class OidcBackChannelLogoutMiddleware(
             if (!string.IsNullOrEmpty(sessionId))
             {
                 logger.TerminatingSessionById(LogRedaction.RedactSessionId(sessionId));
-                var success = await sessionManagement.TerminateSessionAsync(sessionId, revokeTokens: false, context.RequestAborted);
+                var success = await sessionManagement.TerminateSessionAsync(sessionId, revokeTokens: false, context.RequestAborted, reason: "backchannel");
                 terminatedCount = success ? 1 : 0;
             }
             else if (!string.IsNullOrEmpty(subject))
@@ -210,7 +210,7 @@ public sealed class OidcBackChannelLogoutMiddleware(
                 // fail to terminate sessions in the common case (sub != email), bypassing
                 // the IdP-initiated logout security control.
                 logger.TerminatingSessionsBySubject(subject, LogRedaction.FingerprintSubject(subject));
-                terminatedCount = await sessionManagement.TerminateSessionsBySubjectAsync(subject, revokeTokens: false, context.RequestAborted);
+                terminatedCount = await sessionManagement.TerminateSessionsBySubjectAsync(subject, revokeTokens: false, context.RequestAborted, reason: "backchannel");
             }
 
             logger.BackChannelLogoutCompleted(terminatedCount);

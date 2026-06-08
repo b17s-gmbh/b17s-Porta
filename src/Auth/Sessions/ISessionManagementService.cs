@@ -51,8 +51,9 @@ public interface ISessionManagementService
     /// <param name="sessionId">The session identifier</param>
     /// <param name="revokeTokens">Whether to revoke tokens at IdP (best effort)</param>
     /// <param name="cancellationToken">Token to abort the operation when the caller disconnects.</param>
+    /// <param name="reason">Low-cardinality cause recorded on the <c>bff.session.invalidated</c> metric's <c>reason</c> tag (e.g. <c>logout</c>, <c>backchannel</c>, <c>admin</c>).</param>
     /// <returns>True if session was terminated successfully</returns>
-    Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default);
+    Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified");
 
     /// <summary>
     /// Terminates all sessions for a user by email address
@@ -60,8 +61,9 @@ public interface ISessionManagementService
     /// <param name="email">The user's email address</param>
     /// <param name="revokeTokens">Whether to revoke tokens at IdP (best effort)</param>
     /// <param name="cancellationToken">Token to abort the operation when the caller disconnects.</param>
+    /// <param name="reason">Low-cardinality cause recorded on the <c>bff.session.invalidated</c> metric's <c>reason</c> tag (e.g. <c>admin</c>).</param>
     /// <returns>Number of sessions terminated</returns>
-    Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default);
+    Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified");
 
     /// <summary>
     /// Terminates all sessions for a user by subject identifier (the OIDC <c>sub</c> claim).
@@ -72,8 +74,9 @@ public interface ISessionManagementService
     /// <param name="subject">The user's <c>sub</c> claim value as issued by the IdP</param>
     /// <param name="revokeTokens">Whether to revoke tokens at IdP (best effort)</param>
     /// <param name="cancellationToken">Token to abort the operation when the caller disconnects.</param>
+    /// <param name="reason">Low-cardinality cause recorded on the <c>bff.session.invalidated</c> metric's <c>reason</c> tag (e.g. <c>backchannel</c>).</param>
     /// <returns>Number of sessions terminated</returns>
-    Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default);
+    Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified");
 
     /// <summary>
     /// Updates the last activity time for a session.

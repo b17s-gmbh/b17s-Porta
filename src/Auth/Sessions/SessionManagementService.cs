@@ -3,6 +3,7 @@ using System.Text.Json;
 
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Telemetry;
 
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
@@ -30,7 +31,8 @@ public sealed class SessionManagementService(
     ITokenRevocationService? tokenRevocationService = null,
     IDataProtectionProvider? dataProtectionProvider = null,
     Tokens.IRefreshLock? indexLock = null,
-    TimeProvider? timeProvider = null) : ISessionManagementService
+    TimeProvider? timeProvider = null,
+    PortaMetrics? metrics = null) : ISessionManagementService
 {
     private const string RevocationProtectorPurpose = "Porta.SessionTokenRevocation.v1";
 
@@ -129,6 +131,10 @@ public sealed class SessionManagementService(
         }
 
         logger.SessionRegistered(LogRedaction.RedactSessionId(sessionId), userId, LogRedaction.FingerprintSubject(userId));
+
+        // Counts one created session and increments the bff.sessions.active gauge. The matching
+        // decrement happens in TerminateSessionAsync; see the note there on gauge balance.
+        metrics?.RecordSessionCreated();
     }
 
     public async Task UpdateRefreshTokenAsync(string sessionId, string? encryptedRefreshToken)
@@ -221,7 +227,7 @@ public sealed class SessionManagementService(
         }
     }
 
-    public async Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default)
+    public async Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
     {
         if (string.IsNullOrEmpty(sessionId))
         {
@@ -242,6 +248,15 @@ public sealed class SessionManagementService(
             await RemoveSessionMetadataAsync(sessionId, cancellationToken);
             await RemoveFromIndexesAsync(sessionId, metadata, cancellationToken);
 
+            // Count an invalidation (and decrement bff.sessions.active) only when this call actually
+            // tore down a live session - i.e. metadata was still present. A terminate against an
+            // already-expired/already-terminated id must not double-decrement the gauge, which is
+            // only ever incremented once per RegisterSessionAsync.
+            if (metadata != null)
+            {
+                metrics?.RecordSessionInvalidated(reason);
+            }
+
             logger.SessionTerminated(metadata?.Email ?? LogRedaction.RedactSessionId(sessionId), LogRedaction.FingerprintEmail(metadata?.Email), LogRedaction.RedactSessionId(sessionId), revokeTokens);
             return true;
         }
@@ -252,7 +267,7 @@ public sealed class SessionManagementService(
         }
     }
 
-    public async Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default)
+    public async Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
     {
         if (string.IsNullOrEmpty(email))
         {
@@ -269,7 +284,7 @@ public sealed class SessionManagementService(
             var terminatedCount = 0;
             foreach (var session in sessions)
             {
-                if (await TerminateSessionAsync(session.SessionId, revokeTokens, cancellationToken))
+                if (await TerminateSessionAsync(session.SessionId, revokeTokens, cancellationToken, reason))
                 {
                     terminatedCount++;
                 }
@@ -285,7 +300,7 @@ public sealed class SessionManagementService(
         }
     }
 
-    public async Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default)
+    public async Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
     {
         if (string.IsNullOrEmpty(subject))
         {
@@ -304,7 +319,7 @@ public sealed class SessionManagementService(
             var terminatedCount = 0;
             foreach (var sessionId in sessionIds.ToArray())
             {
-                if (await TerminateSessionAsync(sessionId, revokeTokens, cancellationToken))
+                if (await TerminateSessionAsync(sessionId, revokeTokens, cancellationToken, reason))
                 {
                     terminatedCount++;
                 }

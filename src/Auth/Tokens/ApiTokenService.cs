@@ -20,7 +20,8 @@ public sealed class ApiTokenService(
     IOptions<SessionAuthenticationConfiguration> sessionAuthenticationConfigOptions,
     IOptions<PortaCoreOptions> coreOptions,
     ILogger<ApiTokenService> logger,
-    TimeProvider? timeProvider = null) : IApiTokenService, IDisposable
+    TimeProvider? timeProvider = null,
+    PortaMetrics? metrics = null) : IApiTokenService, IDisposable
 {
     private readonly SessionAuthenticationConfiguration sessionAuthenticationConfig = sessionAuthenticationConfigOptions.Value;
     private readonly TimeSpan _refreshSkew = coreOptions.Value.TokenRefreshSkew;
@@ -100,10 +101,12 @@ public sealed class ApiTokenService(
                         await SetCachedApiTokenAsync(context, apiConfig, refreshedToken, cacheOptions.CacheKey, cancellationToken);
 
                         logger.ApiTokenRefreshed(apiConfig.ApiPath);
+                        metrics?.RecordTokenRefresh(success: true, reason: "api_token");
                         return refreshedToken.AccessToken;
                     }
 
                     logger.ApiTokenRefreshReturnedNull(apiConfig.ApiPath);
+                    metrics?.RecordTokenRefresh(success: false, reason: "api_token");
                     await InvalidateApiTokensAsync(context, cacheOptions, cancellationToken);
                     // Fall through to perform new token exchange
                 }

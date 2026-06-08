@@ -316,16 +316,19 @@ public sealed class OidcBackChannelLogoutMiddlewareTests : IDisposable
     {
         public int TerminateBySubjectCallCount { get; private set; }
         public int TerminateBySessionIdCallCount { get; private set; }
+        public string? LastReason { get; private set; }
 
-        public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default)
+        public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
         {
             TerminateBySubjectCallCount++;
+            LastReason = reason;
             return Task.FromResult(1);
         }
 
-        public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default)
+        public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
         {
             TerminateBySessionIdCallCount++;
+            LastReason = reason;
             return Task.FromResult(true);
         }
 
@@ -333,7 +336,7 @@ public sealed class OidcBackChannelLogoutMiddlewareTests : IDisposable
         public Task UpdateRefreshTokenAsync(string sessionId, string? encryptedRefreshToken) => Task.CompletedTask;
         public string? ProtectRefreshToken(string? refreshToken) => refreshToken;
         public Task<IReadOnlyList<SessionInfo>> GetSessionsByEmailAsync(string email, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<SessionInfo>>([]);
-        public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified") => Task.FromResult(0);
         public Task TouchSessionAsync(string sessionId) => Task.CompletedTask;
     }
 }

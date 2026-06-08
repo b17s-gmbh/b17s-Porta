@@ -4,6 +4,7 @@ using System.Text.Json;
 using b17s.Porta.Auth.Sessions;
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Telemetry;
 
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -243,11 +244,56 @@ public class SessionManagementServiceTests
         Assert.NotEqual("plain-rt", encrypted);
     }
 
-    private static (SessionManagementService svc, IDistributedCache cache) CreateService()
+    [Fact]
+    public async Task RegisterSessionAsync_RecordsCreatedAndIncrementsActiveGauge()
+    {
+        using var harness = b17s.Porta.Tests.Telemetry.RecordingMetricsHarness.Create();
+        var (svc, _) = CreateService(harness.Metrics);
+
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "user@example.com");
+
+        Assert.Single(harness.Drain("bff.session.created"));
+        Assert.Equal(1, harness.Net("bff.sessions.active"));
+    }
+
+    [Fact]
+    public async Task TerminateSessionAsync_RecordsInvalidatedWithReason_AndBalancesActiveGauge()
+    {
+        using var harness = b17s.Porta.Tests.Telemetry.RecordingMetricsHarness.Create();
+        var (svc, _) = CreateService(harness.Metrics);
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "user@example.com");
+
+        var terminated = await svc.TerminateSessionAsync("sid-1", revokeTokens: false, TestContext.Current.CancellationToken, reason: "logout");
+
+        Assert.True(terminated);
+        var invalidated = harness.Drain("bff.session.invalidated");
+        Assert.Single(invalidated);
+        Assert.Equal("logout", invalidated[0].Tags["reason"]);
+        // created (+1) then invalidated (-1) nets the active gauge back to zero.
+        Assert.Equal(0, harness.Net("bff.sessions.active"));
+    }
+
+    [Fact]
+    public async Task TerminateSessionAsync_AbsentSession_DoesNotRecordInvalidated_NoDoubleDecrement()
+    {
+        // A terminate against an already-gone session id must not decrement the active gauge again:
+        // the gauge is only incremented once per RegisterSessionAsync, so a spurious decrement here
+        // would drift it negative.
+        using var harness = b17s.Porta.Tests.Telemetry.RecordingMetricsHarness.Create();
+        var (svc, _) = CreateService(harness.Metrics);
+
+        var terminated = await svc.TerminateSessionAsync("never-registered", revokeTokens: false, TestContext.Current.CancellationToken, reason: "logout");
+
+        Assert.True(terminated); // best-effort cleanup still reports success
+        Assert.Empty(harness.Drain("bff.session.invalidated"));
+        Assert.Equal(0, harness.Net("bff.sessions.active"));
+    }
+
+    private static (SessionManagementService svc, IDistributedCache cache) CreateService(PortaMetrics? metrics = null)
     {
         var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
         var config = new SessionAuthenticationConfiguration { SessionTimeoutInMin = 60 };
-        var svc = new SessionManagementService(cache, Options.Create(config), NullLogger<SessionManagementService>.Instance);
+        var svc = new SessionManagementService(cache, Options.Create(config), NullLogger<SessionManagementService>.Instance, metrics: metrics);
         return (svc, cache);
     }
 

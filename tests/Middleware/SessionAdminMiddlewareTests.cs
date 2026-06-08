@@ -330,6 +330,7 @@ public sealed class SessionAdminMiddlewareTests
         public int TerminateByEmailCallCount { get; private set; }
         public int TerminateBySessionIdCallCount { get; private set; }
         public bool? LastRevokeTokens { get; private set; }
+        public string? LastReason { get; private set; }
 
         public Task<IReadOnlyList<SessionInfo>> GetSessionsByEmailAsync(string email, CancellationToken cancellationToken = default)
         {
@@ -338,24 +339,26 @@ public sealed class SessionAdminMiddlewareTests
             return Task.FromResult<IReadOnlyList<SessionInfo>>([]);
         }
 
-        public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default)
+        public Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
         {
             TerminateByEmailCallCount++;
             LastRevokeTokens = revokeTokens;
+            LastReason = reason;
             return Task.FromResult(0);
         }
 
-        public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default)
+        public Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
         {
             TerminateBySessionIdCallCount++;
             LastRevokeTokens = revokeTokens;
+            LastReason = reason;
             return Task.FromResult(true);
         }
 
         public Task RegisterSessionAsync(string sessionId, string userId, string? email = null, string? ipAddress = null, string? userAgent = null, string? encryptedRefreshToken = null) => Task.CompletedTask;
         public Task UpdateRefreshTokenAsync(string sessionId, string? encryptedRefreshToken) => Task.CompletedTask;
         public string? ProtectRefreshToken(string? refreshToken) => refreshToken;
-        public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default) => Task.FromResult(0);
+        public Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified") => Task.FromResult(0);
         public Task TouchSessionAsync(string sessionId) => Task.CompletedTask;
     }
 }

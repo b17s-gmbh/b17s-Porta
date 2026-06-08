@@ -371,9 +371,8 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
 
             try
             {
-                var authContext = allowOptionalAuth
-                    ? await authProvider.TryGetAuthContextAsync(context, context.RequestAborted)
-                    : await authProvider.GetAuthContextAsync(context, context.RequestAborted);
+                var authContext = await AuthInstrumentation.ResolveAsync(
+                    authProvider, context, allowOptionalAuth, metrics, enableTelemetry);
 
                 var transformerContext = new TransformerContext
                 {
