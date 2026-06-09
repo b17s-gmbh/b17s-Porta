@@ -198,7 +198,7 @@ public sealed class DataProtectionConfiguration
     /// Change this value to rotate all encryption keys.
     ///
     /// Default (when left empty): derived at startup from the host's entry-assembly
-    /// name plus "/BFF" - e.g. <c>"MyApp.Api/BFF"</c>. This auto-uniquifies the
+    /// name plus "/Porta" - e.g. <c>"MyApp.Api/Porta"</c>. This auto-uniquifies the
     /// purpose-string namespace so two unrelated BFFs on shared infrastructure
     /// (same Redis, same EF store) don't collide. Set explicitly to opt out of
     /// the auto-derivation (e.g. to keep the same value when renaming an

@@ -121,7 +121,7 @@ The `SessionAuthentication:DataProtection:ApplicationName` setting is the Data P
 }
 ```
 
-When left empty (the default), `ApplicationName` is derived at startup from the host's entry-assembly name plus `/BFF` (e.g. `MyApp.Api/BFF`), so two different apps don't accidentally share a key ring. Set it explicitly to pin a stable discriminator across deployments - or to *deliberately* share one key ring between apps that should decrypt each other's tickets. Two unrelated BFFs that you want isolated must not be given the same explicit `ApplicationName` against the same key store.
+When left empty (the default), `ApplicationName` is derived at startup from the host's entry-assembly name plus `/Porta` (e.g. `MyApp.Api/Porta`), so two different apps don't accidentally share a key ring. Set it explicitly to pin a stable discriminator across deployments - or to *deliberately* share one key ring between apps that should decrypt each other's tickets. Two unrelated BFFs that you want isolated must not be given the same explicit `ApplicationName` against the same key store.
 
 ## Why sticky sessions are not required
 
