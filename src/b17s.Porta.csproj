@@ -6,6 +6,8 @@
     <Nullable>enable</Nullable>
     <RootNamespace>b17s.Porta</RootNamespace>
     <OutputType>Library</OutputType>
+    <!-- Public XML docs ship in the package (.nupkg) so consumers get IntelliSense. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <PropertyGroup>

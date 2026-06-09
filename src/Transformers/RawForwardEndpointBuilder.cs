@@ -527,6 +527,11 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 activity?.SetStatus(ActivityStatusCode.Error, "Response too large");
                 if (!context.Response.HasStarted)
                 {
+                    // Headers were already copied from the backend (Content-Encoding, Content-Length,
+                    // Content-Disposition, cache headers, ...) before bounded streaming began. Reset
+                    // the response so the JSON error body is not emitted alongside stale backend
+                    // headers that describe a body we never sent.
+                    context.Response.Clear();
                     context.Response.StatusCode = 502;
                     await context.Response.WriteAsJsonAsync(new { error = "Backend response too large" }, context.RequestAborted);
                 }
@@ -539,6 +544,9 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 activity?.SetStatus(ActivityStatusCode.Error, "Backend stalled");
                 if (!context.Response.HasStarted)
                 {
+                    // See the size-cap branch above: drop the already-copied backend headers before
+                    // emitting the JSON error so they don't describe a body that never streamed.
+                    context.Response.Clear();
                     context.Response.StatusCode = 504;
                     await context.Response.WriteAsJsonAsync(new { error = "Backend response stalled" }, context.RequestAborted);
                 }
@@ -552,6 +560,9 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
 
                 if (!context.Response.HasStarted)
                 {
+                    // The failure may have surfaced after backend headers were copied (e.g. opening
+                    // the response stream); reset so they don't leak onto the JSON error.
+                    context.Response.Clear();
                     context.Response.StatusCode = 502;
                     await context.Response.WriteAsJsonAsync(new { error = "Backend service unavailable" }, context.RequestAborted);
                 }
@@ -571,6 +582,8 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
 
                 if (!context.Response.HasStarted)
                 {
+                    // Reset any backend headers copied before the failure so the JSON error stands alone.
+                    context.Response.Clear();
                     context.Response.StatusCode = 500;
                     await context.Response.WriteAsJsonAsync(new { error = "Internal server error" }, context.RequestAborted);
                 }
