@@ -21,7 +21,9 @@ internal sealed class BackendForwardingTransformer<TResponse> : ITransformer<TRe
         }
 
         // BackendResult.StatusCode is already mapped by IBackendErrorMapper inside
-        // BackendCaller (default: backend 401/403 -> 502), so no re-mapping here.
+        // BackendCaller (default: 401/403 -> 502) - both for backend HTTP errors and for
+        // transport/auth-stage failures such as an auth-handler exception (MapSendFailure),
+        // so no re-mapping here.
         // Writing the response here sets HasStarted; the outer handler then skips
         // its own WriteAsJsonAsync.
         context.HttpContext.Response.StatusCode = result.StatusCode;

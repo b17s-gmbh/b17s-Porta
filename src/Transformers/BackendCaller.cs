@@ -185,7 +185,8 @@ public sealed class BackendCaller(
         var sendResult = await SendRequestAsync<object>(request, null, cancellationToken);
         if (!sendResult.IsSuccess)
         {
-            return BackendResult<TResponse>.Failure(sendResult.StatusCode, sendResult.Error!, sendResult.ErrorType);
+            var (status, message, errorType) = MapSendFailure(sendResult, request);
+            return BackendResult<TResponse>.Failure(status, message, errorType);
         }
         // Dispose the response once we're done with it. Mandatory under ResponseHeadersRead:
         // the body stream - and the underlying connection - stays open until the message is
@@ -200,7 +201,8 @@ public sealed class BackendCaller(
         var sendResult = await SendRequestAsync(request, body, cancellationToken);
         if (!sendResult.IsSuccess)
         {
-            return BackendResult<TResponse>.Failure(sendResult.StatusCode, sendResult.Error!, sendResult.ErrorType);
+            var (status, message, errorType) = MapSendFailure(sendResult, request);
+            return BackendResult<TResponse>.Failure(status, message, errorType);
         }
         using var response = sendResult.Response!;
         return await DeserializeResponseAsync<TResponse>(response, request, cancellationToken);
@@ -212,7 +214,8 @@ public sealed class BackendCaller(
         var sendResult = await SendRequestAsync<object>(request, null, cancellationToken);
         if (!sendResult.IsSuccess)
         {
-            return BackendResult.Failure(sendResult.StatusCode, sendResult.Error!, sendResult.ErrorType);
+            var (status, message, errorType) = MapSendFailure(sendResult, request);
+            return BackendResult.Failure(status, message, errorType);
         }
         using var response = sendResult.Response!;
         if (!response.IsSuccessStatusCode)
@@ -228,7 +231,8 @@ public sealed class BackendCaller(
         var sendResult = await SendRequestAsync(request, body, cancellationToken);
         if (!sendResult.IsSuccess)
         {
-            return BackendResult.Failure(sendResult.StatusCode, sendResult.Error!, sendResult.ErrorType);
+            var (status, message, errorType) = MapSendFailure(sendResult, request);
+            return BackendResult.Failure(status, message, errorType);
         }
         using var response = sendResult.Response!;
         if (!response.IsSuccessStatusCode)
@@ -244,7 +248,8 @@ public sealed class BackendCaller(
         var sendResult = await SendRequestAsync<object>(request, null, cancellationToken);
         if (!sendResult.IsSuccess)
         {
-            return BackendObjectResult.Failure(sendResult.StatusCode, sendResult.Error!, sendResult.ErrorType);
+            var (status, message, errorType) = MapSendFailure(sendResult, request);
+            return BackendObjectResult.Failure(status, message, errorType);
         }
         using var response = sendResult.Response!;
         return await DeserializeResponseAsObjectAsync(response, request, responseType, cancellationToken);
@@ -256,7 +261,8 @@ public sealed class BackendCaller(
         var sendResult = await SendRequestAsync(request, body, cancellationToken);
         if (!sendResult.IsSuccess)
         {
-            return BackendObjectResult.Failure(sendResult.StatusCode, sendResult.Error!, sendResult.ErrorType);
+            var (status, message, errorType) = MapSendFailure(sendResult, request);
+            return BackendObjectResult.Failure(status, message, errorType);
         }
         using var response = sendResult.Response!;
         return await DeserializeResponseAsObjectAsync(response, request, responseType, cancellationToken);
@@ -286,10 +292,8 @@ public sealed class BackendCaller(
         var sendResult = await SendRequestAsync(graphqlBackendRequest, graphqlRequest, cancellationToken);
         if (!sendResult.IsSuccess)
         {
-            return GraphQLResult<TResponse>.FromBackendError(
-                sendResult.StatusCode,
-                sendResult.Error!,
-                sendResult.ErrorType);
+            var (status, message, errorType) = MapSendFailure(sendResult, graphqlBackendRequest);
+            return GraphQLResult<TResponse>.FromBackendError(status, message, errorType);
         }
 
         using var response = sendResult.Response!;
@@ -632,13 +636,49 @@ public sealed class BackendCaller(
             }
             catch (Exception ex)
             {
+                // Generic client-facing message: the exception detail is logged above but can
+                // describe IdP/token-exchange internals, so it must never reach the client.
                 logger.BackendAuthError(request.Method, SanitizeUrl(request.Url), ex.Message);
                 RecordBackendError(activity, stopwatch, serviceName, 401, "Authentication failed");
-                return SendResult.AuthError($"Authentication failed: {ex.Message}");
+                return SendResult.AuthError("Backend authentication failed");
             }
         }
 
         return null; // No error
+    }
+
+    /// <summary>
+    /// Maps a failed <see cref="SendResult"/> (auth-handler failure, timeout, network or config
+    /// error - no backend HTTP response exists) through the configured <see cref="IBackendErrorMapper"/>
+    /// before it becomes a client-visible status. Without this, an auth-handler exception surfaced
+    /// as a synthetic 401 would bypass the mapper - which otherwise only sees real backend
+    /// responses - and a BFF credential problem would sign the user out (the exact failure mode
+    /// the default 401 -&gt; 502 mapping exists to prevent). The raw paths (<c>CallRawAsync</c>)
+    /// stay unmapped; <c>RawForwardEndpointBuilder</c> applies the mapper itself.
+    /// </summary>
+    private (int StatusCode, string Message, BackendErrorType ErrorType) MapSendFailure(SendResult sendResult, BackendRequest request)
+    {
+        var (mappedStatus, mappedMessage) = _errorMapper.MapError(sendResult.StatusCode, sendResult.Error, request);
+        if (mappedStatus == sendResult.StatusCode)
+        {
+            // Mapper passed the status through (default for everything but 401/403): keep the
+            // original, more specific error type (Timeout, NetworkError, ConfigurationError, ...).
+            return (mappedStatus, mappedMessage, sendResult.ErrorType);
+        }
+
+        // The mapper rewrote the status (default: auth-stage 401 -> 502). Recompute the error
+        // type from the mapped status - matching MapHttpErrorToResult - so downstream conversions
+        // that key on ErrorType (e.g. GraphQLResult.ToBackendResult turns AuthenticationError back
+        // into a 401) cannot resurrect the unmapped status.
+        var errorType = mappedStatus switch
+        {
+            401 => BackendErrorType.AuthenticationError,
+            403 => BackendErrorType.AuthorizationError,
+            >= 400 and < 500 => BackendErrorType.ClientError,
+            >= 500 => BackendErrorType.ServerError,
+            _ => BackendErrorType.Unknown
+        };
+        return (mappedStatus, mappedMessage, errorType);
     }
 
     private BackendResult MapHttpErrorToResult(HttpResponseMessage response, BackendRequest request)

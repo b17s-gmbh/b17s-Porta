@@ -614,6 +614,52 @@ public sealed class BackendCallerGraphQLAndRawTests
         Assert.Null(handler.LastRequest); // the backend was never called
     }
 
+    [Fact]
+    public async Task Call_AuthHandlerThrows_MapsTo502_WithoutLeakingExceptionMessage()
+    {
+        // M1 regression: an auth-handler exception (e.g. token exchange failure) is a BFF
+        // credential problem, not a user-credential rejection. The typed paths must run the
+        // synthetic 401 through IBackendErrorMapper (default: -> 502) like a real backend 401,
+        // so the frontend doesn't sign the user out - and the exception message must never
+        // reach the client-visible error string.
+        var handler = new StubHandler(HttpStatusCode.OK, "{}", "application/json");
+        var caller = CreateCaller(handler, authHandler: new ThrowingAuthHandler("Throwing"));
+
+        var request = new BackendRequest { Method = "GET", Url = "https://backend.test/x", BackendAuthPolicy = "Throwing" };
+        var result = await caller.CallAsync<Product>(request, TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(502, result.StatusCode);
+        Assert.DoesNotContain("auth handler failed", result.Error);
+        // The error type follows the mapped status (matching the real-backend-401 path), so
+        // conversions that key on AuthenticationError cannot resurrect the 401.
+        Assert.Equal(BackendErrorType.ServerError, result.ErrorType);
+        Assert.Null(handler.LastRequest); // the backend was never called
+    }
+
+    [Fact]
+    public async Task CallGraphQL_AuthHandlerThrows_MapsTo502_AndToBackendResultKeeps502()
+    {
+        // Same M1 guarantee on the GraphQL path, including the ToBackendResult round-trip:
+        // GraphQLResult.ToBackendResult turns AuthenticationError into a 401, so the mapped
+        // failure must not carry that error type.
+        var handler = new StubHandler(HttpStatusCode.OK, "{}", "application/json");
+        var caller = CreateCaller(handler, authHandler: new ThrowingAuthHandler("Throwing"));
+
+        var request = new BackendRequest { Method = "POST", Url = "https://backend.test/graphql", BackendAuthPolicy = "Throwing" };
+        var result = await caller.CallGraphQLAsync<Product>(
+            request, "query { product { id } }", null, "product",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(502, result.MappedStatusCode);
+        Assert.DoesNotContain("auth handler failed", result.Error);
+
+        var backendResult = result.ToBackendResult();
+        Assert.Equal(502, backendResult.StatusCode);
+        Assert.Null(handler.LastRequest); // the backend was never called
+    }
+
     // ===========================================================================
     // Response disposal (mandatory under ResponseHeadersRead)
     // ===========================================================================
@@ -783,8 +829,13 @@ public sealed class BackendCallerGraphQLAndRawTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal(BackendErrorType.AuthenticationError, result.ErrorType);
+        // The raw path surfaces the unmapped SendResult; RawForwardEndpointBuilder runs it
+        // through IBackendErrorMapper itself before anything reaches the client.
         Assert.Equal(401, result.StatusCode);
-        Assert.StartsWith("Authentication failed:", result.Error);
+        // The exception detail is logged, never surfaced - the error string can end up
+        // client-side via a pass-through mapper.
+        Assert.Equal("Backend authentication failed", result.Error);
+        Assert.DoesNotContain("auth handler failed", result.Error);
         // Backend was never called.
         Assert.Null(handler.LastRequest);
     }
