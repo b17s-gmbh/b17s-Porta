@@ -84,7 +84,6 @@ public class AuthHttpClientRegistrationTests
             ["SessionAuthentication:CookieName"] = "TestCookie",
             ["SessionAuthentication:UsePkce"] = "true",
             ["SessionAuthentication:SessionTimeoutInMin"] = "60",
-            ["SessionAuthentication:DataProtection:Enabled"] = "true",
             ["SessionAuthentication:DataProtection:ApplicationName"] = "TestApp",
             ["SessionAuthentication:DataProtection:KeyLifetimeDays"] = "30",
         };

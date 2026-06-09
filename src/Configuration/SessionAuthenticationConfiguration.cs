@@ -193,13 +193,6 @@ public sealed class TokenRefreshResilienceConfiguration
 public sealed class DataProtectionConfiguration
 {
     /// <summary>
-    /// Enable encryption of tokens stored in Redis/session storage.
-    /// Strongly recommended even for internal Redis deployments (defense-in-depth).
-    /// Default: true
-    /// </summary>
-    public bool Enabled { get; set; } = true;
-
-    /// <summary>
     /// Application name used for Data Protection key-derivation purpose-strings.
     /// IMPORTANT: Must be identical across all BFF instances in the cluster.
     /// Change this value to rotate all encryption keys.

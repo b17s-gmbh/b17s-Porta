@@ -53,7 +53,6 @@ builder.Services.AddPortaAuthentication(builder.Configuration);
       "SlidingExpiration": false
     },
     "DataProtection": {
-      "Enabled": true,
       "ApplicationName": "MyPorta",
       "KeyLifetimeDays": 90
     }
