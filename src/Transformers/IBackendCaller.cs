@@ -848,7 +848,7 @@ public sealed class NamedBackendEndpointsBuilder
         => Mutate(e => e with { Timeout = timeout });
 
     /// <summary>Enables automatic retries for transient failures on the most recently added backend.</summary>
-    /// <param name="maxAttempts">Maximum number of retry attempts. Default: 3</param>
+    /// <param name="maxAttempts">Number of retry attempts for this backend, capped by the app-wide <see cref="Configuration.PortaCoreOptions.MaxRetryAttempts"/> ceiling (effective count <c>min(maxAttempts, ceiling)</c>). Default: 3</param>
     public NamedBackendEndpointsBuilder WithRetries(int maxAttempts = 3)
         => Mutate(e => e with { EnableRetries = true, MaxRetryAttempts = maxAttempts });
 
@@ -1079,7 +1079,7 @@ public static class BackendEndpointExtensions
     /// Enables automatic retries for transient failures on this backend endpoint.
     /// </summary>
     /// <param name="endpoint">A configured NamedBackendEndpoint</param>
-    /// <param name="maxAttempts">Maximum number of retry attempts. Default: 3</param>
+    /// <param name="maxAttempts">Number of retry attempts for this backend, capped by the app-wide <see cref="Configuration.PortaCoreOptions.MaxRetryAttempts"/> ceiling (effective count <c>min(maxAttempts, ceiling)</c>). Default: 3</param>
     /// <returns>The endpoint with retries enabled</returns>
     /// <example>
     /// ("FlakyApi", "GET", $"{url}/data").WithAuth(policy).WithRetries(3)
@@ -1092,7 +1092,7 @@ public static class BackendEndpointExtensions
     /// Note: This creates an endpoint with no authentication. Chain with .WithAuth() first if auth is needed.
     /// </summary>
     /// <param name="endpoint">The endpoint tuple (name, method, url)</param>
-    /// <param name="maxAttempts">Maximum number of retry attempts. Default: 3</param>
+    /// <param name="maxAttempts">Number of retry attempts for this backend, capped by the app-wide <see cref="Configuration.PortaCoreOptions.MaxRetryAttempts"/> ceiling (effective count <c>min(maxAttempts, ceiling)</c>). Default: 3</param>
     /// <returns>A configured NamedBackendEndpoint with retries enabled</returns>
     public static NamedBackendEndpoint WithRetries(
         this (string Name, string Method, string Url) endpoint,

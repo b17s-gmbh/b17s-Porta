@@ -155,9 +155,14 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
     }
 
     /// <summary>
-    /// Enables automatic retries for transient failures on backend calls.
-    /// Retries are disabled by default.
+    /// Enables automatic retries for transient backend failures (5xx, connection errors, timeouts)
+    /// with exponential backoff. Retries are disabled by default.
     /// </summary>
+    /// <param name="maxAttempts">
+    /// Number of retry attempts for this endpoint. Capped by the app-wide
+    /// <see cref="Configuration.PortaCoreOptions.MaxRetryAttempts"/> ceiling, so the effective count
+    /// is <c>min(maxAttempts, ceiling)</c>; raise the ceiling to allow more.
+    /// </param>
     public TBuilder WithRetries(int maxAttempts = 3)
     {
         _enableRetries = true;

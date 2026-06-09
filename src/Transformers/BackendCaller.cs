@@ -65,6 +65,19 @@ public sealed class BackendCaller(
     /// is set. Registered by <c>AddPortaCore</c>.
     /// </summary>
     public const string HttpClientNameWithRetries = "Porta.BackendCaller.WithRetries";
+
+    /// <summary>
+    /// Per-request key carrying the endpoint's retry budget (the <c>WithRetries(n)</c> value) on
+    /// the outbound <see cref="HttpRequestMessage"/>. The retry pipeline on
+    /// <see cref="HttpClientNameWithRetries"/> bakes a single, app-wide attempt count, so the
+    /// per-endpoint count is threaded here and enforced by the pipeline's <c>ShouldHandle</c> gate
+    /// (see <c>AddPortaCore</c>). Read via <c>HttpResilienceContextExtensions.GetRequestMessage</c>
+    /// so it is honored on both response and exception outcomes. The pipeline's own
+    /// <c>MaxRetryAttempts</c> (bound to <see cref="PortaCoreOptions.MaxRetryAttempts"/>) remains the
+    /// app-wide ceiling: the effective retry count is <c>min(budget, ceiling)</c>.
+    /// </summary>
+    internal static readonly HttpRequestOptionsKey<int> RetryBudgetOption = new("Porta.RetryBudget");
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -443,6 +456,14 @@ public sealed class BackendCaller(
 
         var httpRequest = new HttpRequestMessage(new HttpMethod(request.Method), request.Url);
 
+        // Thread the per-endpoint retry budget onto the request so the retry pipeline's ShouldHandle
+        // gate spends exactly WithRetries(n) attempts (clamped to the app-wide ceiling) instead of
+        // the global count. No-op on the non-retry client, which ignores the option.
+        if (request.EnableRetries)
+        {
+            httpRequest.Options.Set(RetryBudgetOption, request.MaxRetryAttempts);
+        }
+
         // Add custom headers
         if (request.Headers != null)
         {
@@ -819,6 +840,14 @@ public sealed class BackendCaller(
         }
 
         var httpRequest = new HttpRequestMessage(new HttpMethod(request.Method), request.Url);
+
+        // Thread the per-endpoint retry budget onto the request so the retry pipeline's ShouldHandle
+        // gate spends exactly WithRetries(n) attempts (clamped to the app-wide ceiling) instead of
+        // the global count. No-op on the non-retry client, which ignores the option.
+        if (request.EnableRetries)
+        {
+            httpRequest.Options.Set(RetryBudgetOption, request.MaxRetryAttempts);
+        }
 
         // Note: W3C Trace Context headers (traceparent/tracestate) are automatically propagated
         // by AddHttpClientInstrumentation() configured in ServiceDefaults. No manual injection needed.

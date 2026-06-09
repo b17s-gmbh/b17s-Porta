@@ -186,6 +186,8 @@ The `ToBackends(configure => ...)` builder adds a backend per `ToGet/ToPost/...`
 ("BackendName", "GET", "http://backend/api/endpoint").WithAuth(...).WithRetries(3)
 ```
 
+`WithRetries(n)` retries transient backend failures (5xx, connection errors, timeouts) with exponential backoff. The count is **per endpoint** - each backend retries the number of attempts it declares. `PortaCore:MaxRetryAttempts` (default `3`) is the app-wide **ceiling**, so the effective count is `min(n, MaxRetryAttempts)`; raise the ceiling to let endpoints request more. Endpoints that never call `WithRetries(...)` are not retried.
+
 ## Refresh-on-401 Retry
 
 A backend `401` on a `BearerToken`/`TokenExchange` endpoint triggers a one-shot user-token refresh and a single retry with the rotated token. This is **on by default** - no builder call needed - and disabled globally via `PortaCore:RefreshBackendTokenOn401 = false`. It is bounded (one refresh + one retry, skipped when the token doesn't rotate) and concurrency-safe across aggregation. See [Authentication](authentication.md#refreshing-the-user-token-on-a-backend-401) for the full behavior and caveats.

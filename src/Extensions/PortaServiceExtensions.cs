@@ -16,6 +16,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 
+using Polly;
+
 namespace b17s.Porta.Extensions;
 
 /// <summary>
@@ -147,14 +149,7 @@ public static class PortaServiceExtensions
         })
         .AddStandardResilienceHandler()
         .Configure((resilience, sp) =>
-        {
-            var coreOptions = sp.GetRequiredService<IOptions<PortaCoreOptions>>().Value;
-            resilience.AttemptTimeout.Timeout = coreOptions.DefaultTimeout;
-            resilience.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(coreOptions.DefaultTimeout.TotalSeconds * 2);
-            resilience.Retry.MaxRetryAttempts = coreOptions.MaxRetryAttempts;
-            // Circuit breaker sampling duration must be at least 2x the attempt timeout
-            resilience.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(coreOptions.DefaultTimeout.TotalSeconds * 2.5);
-        });
+            ConfigureBackendResilience(resilience, sp.GetRequiredService<IOptions<PortaCoreOptions>>().Value));
 
         // Register built-in backend auth handlers as IBackendAuthHandler. Consumers add
         // custom handlers via AddPortaAuthHandler<T> which appends to the same DI
@@ -230,6 +225,46 @@ public static class PortaServiceExtensions
         services.AddAuthorization();
 
         return services;
+    }
+
+    /// <summary>
+    /// Configures the standard resilience pipeline on the retrying backend
+    /// <see cref="HttpClient"/> (<see cref="BackendCaller.HttpClientNameWithRetries"/>).
+    /// </summary>
+    /// <remarks>
+    /// <c>AddStandardResilienceHandler</c> bakes a single <c>MaxRetryAttempts</c> into the pipeline,
+    /// so <see cref="PortaCoreOptions.MaxRetryAttempts"/> is treated as the app-wide <em>ceiling</em>
+    /// rather than the count every endpoint gets. The per-endpoint <c>WithRetries(n)</c> value is
+    /// carried on the outbound request via <see cref="BackendCaller.RetryBudgetOption"/> and enforced
+    /// by the <c>ShouldHandle</c> gate below, so the effective retry count is <c>min(n, ceiling)</c>.
+    /// The budget is read from the resilience context (not the outcome) so it is honored for
+    /// exception outcomes too, where there is no response to inspect. Requests without a budget
+    /// (non-Porta callers sharing the client) fall through to the ceiling.
+    /// </remarks>
+    internal static void ConfigureBackendResilience(HttpStandardResilienceOptions resilience, PortaCoreOptions coreOptions)
+    {
+        resilience.AttemptTimeout.Timeout = coreOptions.DefaultTimeout;
+        resilience.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(coreOptions.DefaultTimeout.TotalSeconds * 2);
+
+        resilience.Retry.MaxRetryAttempts = coreOptions.MaxRetryAttempts;
+        var isTransient = resilience.Retry.ShouldHandle;
+        resilience.Retry.ShouldHandle = args =>
+        {
+            var budget = args.Context.GetRequestMessage() is { } message
+                && message.Options.TryGetValue(BackendCaller.RetryBudgetOption, out var n)
+                ? n
+                : coreOptions.MaxRetryAttempts;
+
+            // args.AttemptNumber is the 0-based index of the attempt that just failed, so the first
+            // retry decision sees 0. Stop once the per-endpoint budget is spent; otherwise defer to
+            // the standard transient-failure predicate.
+            return args.AttemptNumber >= budget
+                ? ValueTask.FromResult(false)
+                : isTransient(args);
+        };
+
+        // Circuit breaker sampling duration must be at least 2x the attempt timeout
+        resilience.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(coreOptions.DefaultTimeout.TotalSeconds * 2.5);
     }
 
     /// <summary>

@@ -16,7 +16,9 @@ builder.Services.AddPortaCore(options => {
     // Default timeout for backend calls (default: 30 seconds)
     options.DefaultTimeout = TimeSpan.FromSeconds(30);
 
-    // Max retry attempts when retries enabled (default: 3)
+    // App-wide ceiling for per-endpoint .WithRetries(n). Each endpoint retries
+    // min(n, MaxRetryAttempts) times; endpoints that never call .WithRetries(...)
+    // do not retry. Used for the retry pipeline when retries are enabled (default: 3).
     options.MaxRetryAttempts = 3;
 
     // Refresh the user token and retry once on a backend 401 (default: true)
