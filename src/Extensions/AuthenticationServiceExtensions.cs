@@ -553,10 +553,14 @@ public static class AuthenticationServiceExtensions
     /// <see cref="TokenRefreshResilienceConfiguration.EnableRetry"/> and
     /// <see cref="TokenRefreshResilienceConfiguration.EnableCircuitBreaker"/>
     /// flags therefore cannot remove a strategy - they must neutralize it. When a
-    /// flag is <c>false</c> we explicitly disable that strategy (zero retry
-    /// attempts; a circuit-breaker predicate that never trips) so the documented
-    /// opt-out actually takes effect instead of silently leaving the package
-    /// defaults active.
+    /// flag is <c>false</c> we explicitly disable that strategy with a
+    /// <c>ShouldHandle</c> predicate that never matches (no outcome is retryable;
+    /// no outcome counts as a circuit failure) so the documented opt-out actually
+    /// takes effect instead of silently leaving the package defaults active.
+    /// Setting <c>MaxRetryAttempts = 0</c> is not an option: Polly validates the
+    /// strategy options (<c>[Range(1, ...)]</c>) when the pipeline is first built,
+    /// so a zero would throw <c>OptionsValidationException</c> on the first token
+    /// call.
     /// </remarks>
     internal static void ConfigureTokenResilience(
         HttpStandardResilienceOptions options,
@@ -574,8 +578,10 @@ public static class AuthenticationServiceExtensions
         else
         {
             // No retry strategy can be removed from the standard pipeline, so make
-            // it a no-op: zero attempts means the request is sent exactly once.
-            options.Retry.MaxRetryAttempts = 0;
+            // it a no-op: a predicate that never considers any outcome retryable
+            // means the request is sent exactly once. MaxRetryAttempts stays at
+            // its (valid) default - zeroing it fails Polly's range validation.
+            options.Retry.ShouldHandle = static _ => PredicateResult.False();
         }
 
         if (resilience.EnableCircuitBreaker)

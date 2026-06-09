@@ -34,6 +34,8 @@ public sealed class PortaCoreOptions
     /// <summary>
     /// Maximum number of retry attempts when retries are enabled via WithRetries().
     /// Note: Retries are disabled by default and must be explicitly enabled per-endpoint.
+    /// A value below 1 disables retries app-wide, including for endpoints that opt in
+    /// via WithRetries().
     /// Default: 3
     /// </summary>
     public int MaxRetryAttempts { get; set; } = 3;

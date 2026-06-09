@@ -240,28 +240,44 @@ public static class PortaServiceExtensions
     /// The budget is read from the resilience context (not the outcome) so it is honored for
     /// exception outcomes too, where there is no response to inspect. Requests without a budget
     /// (non-Porta callers sharing the client) fall through to the ceiling.
+    /// A ceiling below 1 disables retries app-wide. It cannot be copied onto
+    /// <c>MaxRetryAttempts</c> verbatim - Polly validates the strategy options
+    /// (<c>[Range(1, ...)]</c>) when the pipeline is first built, so a zero would throw
+    /// <c>OptionsValidationException</c> on the first backend call - and is instead modelled as a
+    /// <c>ShouldHandle</c> predicate that never retries, mirroring the token-client opt-out in
+    /// <see cref="b17s.Porta.Extensions.AuthenticationServiceExtensions"/>.
     /// </remarks>
     internal static void ConfigureBackendResilience(HttpStandardResilienceOptions resilience, PortaCoreOptions coreOptions)
     {
         resilience.AttemptTimeout.Timeout = coreOptions.DefaultTimeout;
         resilience.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(coreOptions.DefaultTimeout.TotalSeconds * 2);
 
-        resilience.Retry.MaxRetryAttempts = coreOptions.MaxRetryAttempts;
-        var isTransient = resilience.Retry.ShouldHandle;
-        resilience.Retry.ShouldHandle = args =>
+        if (coreOptions.MaxRetryAttempts < 1)
         {
-            var budget = args.Context.GetRequestMessage() is { } message
-                && message.Options.TryGetValue(BackendCaller.RetryBudgetOption, out var n)
-                ? n
-                : coreOptions.MaxRetryAttempts;
+            // Retries disabled app-wide: never retry, regardless of any per-endpoint
+            // WithRetries(n) budget. MaxRetryAttempts stays at its (valid) default -
+            // zeroing it fails Polly's range validation at pipeline build.
+            resilience.Retry.ShouldHandle = static _ => PredicateResult.False();
+        }
+        else
+        {
+            resilience.Retry.MaxRetryAttempts = coreOptions.MaxRetryAttempts;
+            var isTransient = resilience.Retry.ShouldHandle;
+            resilience.Retry.ShouldHandle = args =>
+            {
+                var budget = args.Context.GetRequestMessage() is { } message
+                    && message.Options.TryGetValue(BackendCaller.RetryBudgetOption, out var n)
+                    ? n
+                    : coreOptions.MaxRetryAttempts;
 
-            // args.AttemptNumber is the 0-based index of the attempt that just failed, so the first
-            // retry decision sees 0. Stop once the per-endpoint budget is spent; otherwise defer to
-            // the standard transient-failure predicate.
-            return args.AttemptNumber >= budget
-                ? ValueTask.FromResult(false)
-                : isTransient(args);
-        };
+                // args.AttemptNumber is the 0-based index of the attempt that just failed, so the first
+                // retry decision sees 0. Stop once the per-endpoint budget is spent; otherwise defer to
+                // the standard transient-failure predicate.
+                return args.AttemptNumber >= budget
+                    ? ValueTask.FromResult(false)
+                    : isTransient(args);
+            };
+        }
 
         // Circuit breaker sampling duration must be at least 2x the attempt timeout
         resilience.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(coreOptions.DefaultTimeout.TotalSeconds * 2.5);

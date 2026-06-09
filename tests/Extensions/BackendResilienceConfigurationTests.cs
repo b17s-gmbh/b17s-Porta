@@ -4,6 +4,7 @@ using b17s.Porta.Configuration;
 using b17s.Porta.Extensions;
 using b17s.Porta.Transformers;
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
 
 using Polly;
@@ -123,6 +124,61 @@ public class BackendResilienceConfigurationTests
 
         Assert.True(await ShouldRetryAsync(options, attemptNumber: 0, budget: 2, transientException));
         Assert.False(await ShouldRetryAsync(options, attemptNumber: 2, budget: 2, transientException));
+    }
+
+    [Fact]
+    public async Task ZeroCeiling_DisablesRetries_AndKeepsOptionsValid()
+    {
+        // PortaCore:MaxRetryAttempts=0 means "no retries app-wide, even for
+        // WithRetries endpoints". Polly rejects MaxRetryAttempts=0 ([Range(1, ...)])
+        // when the pipeline is built, so the ceiling cannot be copied through
+        // verbatim - the opt-out is modelled as a never-retry predicate instead.
+        var options = Configure(ceiling: 0);
+
+        Assert.True(options.Retry.MaxRetryAttempts > 0);
+        Assert.False(await ShouldRetryAsync(options, attemptNumber: 0, budget: null, Transient()));
+        // A per-endpoint WithRetries(n) budget must not punch through the disabled ceiling.
+        Assert.False(await ShouldRetryAsync(options, attemptNumber: 0, budget: 5, Transient()));
+    }
+
+    [Fact]
+    public async Task ZeroCeiling_PipelineBuilds_AndSendsExactlyOnce()
+    {
+        // End-to-end repro: pipeline options are validated when the pipeline is
+        // built on the first request, which is where MaxRetryAttempts=0 used to
+        // throw OptionsValidationException.
+        var handler = new CountingFailureHandler();
+        var services = new ServiceCollection();
+        services.AddHttpClient("backend-resilience-test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddStandardResilienceHandler()
+            .Configure(options => PortaServiceExtensions.ConfigureBackendResilience(
+                options,
+                new PortaCoreOptions { MaxRetryAttempts = 0 }));
+
+        await using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient("backend-resilience-test");
+
+        using var response = await client.GetAsync(
+            new Uri("https://backend.test/resource"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(1, handler.Attempts);
+    }
+
+    private sealed class CountingFailureHandler : HttpMessageHandler
+    {
+        public int Attempts;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Attempts);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        }
     }
 
     [Fact]

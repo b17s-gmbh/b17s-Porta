@@ -102,12 +102,25 @@ internal sealed class SessionAuthenticationConfigurationValidator
             }
         }
 
-        if (options.Resilience is not null
-            && options.Resilience.RequestTimeoutSeconds <= 0)
+        if (options.Resilience is not null)
         {
-            errors.Add(
-                $"SessionAuthentication.Resilience.RequestTimeoutSeconds must be > 0. " +
-                $"Got: {options.Resilience.RequestTimeoutSeconds}.");
+            if (options.Resilience.RequestTimeoutSeconds <= 0)
+            {
+                errors.Add(
+                    $"SessionAuthentication.Resilience.RequestTimeoutSeconds must be > 0. " +
+                    $"Got: {options.Resilience.RequestTimeoutSeconds}.");
+            }
+            // Polly rejects MaxRetryAttempts < 1 when the token pipeline is first
+            // built, which would surface as an OptionsValidationException on the
+            // first token call instead of at startup. Only validated when retries
+            // are enabled - with EnableRetry=false the value is never applied.
+            if (options.Resilience.EnableRetry && options.Resilience.MaxRetryAttempts < 1)
+            {
+                errors.Add(
+                    $"SessionAuthentication.Resilience.MaxRetryAttempts must be >= 1 when " +
+                    $"EnableRetry is true. Got: {options.Resilience.MaxRetryAttempts}. " +
+                    "Set EnableRetry=false to disable retries.");
+            }
         }
 
         return errors.Count == 0

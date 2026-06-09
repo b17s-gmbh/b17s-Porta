@@ -1,10 +1,14 @@
+using System.Net;
+
 using b17s.Porta.Configuration;
 using b17s.Porta.Extensions;
 
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Http.Resilience;
 
 using Polly;
 using Polly.CircuitBreaker;
+using Polly.Retry;
 
 namespace b17s.Porta.Tests.Extensions;
 
@@ -37,18 +41,76 @@ public class TokenResilienceConfigurationTests
     }
 
     [Fact]
-    public void DisabledRetry_ZeroesOutRetryAttempts()
+    public async Task DisabledRetry_NeverRetriesTransientFailures()
     {
         var options = new HttpStandardResilienceOptions();
-        // Sanity: the standard pipeline ships with retries enabled by default,
-        // so a non-zero default is what makes the opt-out meaningful.
-        Assert.True(options.Retry.MaxRetryAttempts > 0);
-
         var resilience = new TokenRefreshResilienceConfiguration { EnableRetry = false };
 
         AuthenticationServiceExtensions.ConfigureTokenResilience(options, resilience);
 
-        Assert.Equal(0, options.Retry.MaxRetryAttempts);
+        // The opt-out must keep MaxRetryAttempts inside Polly's valid range
+        // ([Range(1, ...)]): setting it to 0 fails options validation when the
+        // pipeline is built, turning the documented opt-out into an
+        // OptionsValidationException on the first token call. Disabling is
+        // modelled like the circuit-breaker opt-out below: a predicate that
+        // never treats any outcome as retryable.
+        Assert.True(options.Retry.MaxRetryAttempts > 0);
+
+        var context = ResilienceContextPool.Shared.Get(TestContext.Current.CancellationToken);
+        try
+        {
+            var args = new RetryPredicateArguments<HttpResponseMessage>(
+                context,
+                Outcome.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)),
+                attemptNumber: 0);
+
+            Assert.False(await options.Retry.ShouldHandle(args));
+        }
+        finally
+        {
+            ResilienceContextPool.Shared.Return(context);
+        }
+    }
+
+    [Fact]
+    public async Task DisabledRetry_PipelineBuilds_AndSendsExactlyOnce()
+    {
+        // End-to-end repro: the resilience pipeline is built (and its options
+        // validated) on the first request through the named client, so the
+        // opt-out has to survive an actual send - asserting the configured
+        // property values alone proves nothing.
+        var handler = new CountingFailureHandler();
+        var services = new ServiceCollection();
+        services.AddHttpClient("token-resilience-test")
+            .ConfigurePrimaryHttpMessageHandler(() => handler)
+            .AddStandardResilienceHandler()
+            .Configure(options => AuthenticationServiceExtensions.ConfigureTokenResilience(
+                options,
+                new TokenRefreshResilienceConfiguration { EnableRetry = false }));
+
+        await using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<IHttpClientFactory>()
+            .CreateClient("token-resilience-test");
+
+        using var response = await client.GetAsync(
+            new Uri("https://idp.test/token"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(1, handler.Attempts);
+    }
+
+    private sealed class CountingFailureHandler : HttpMessageHandler
+    {
+        public int Attempts;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Attempts);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        }
     }
 
     [Fact]

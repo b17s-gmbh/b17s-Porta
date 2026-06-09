@@ -128,7 +128,9 @@ public sealed class TokenRefreshResilienceConfiguration
     public bool EnableRetry { get; set; } = true;
 
     /// <summary>
-    /// Maximum number of retry attempts (default: 3)
+    /// Maximum number of retry attempts (default: 3).
+    /// Must be at least 1 when <see cref="EnableRetry"/> is <c>true</c> (validated at
+    /// startup); to disable retries set <see cref="EnableRetry"/> to <c>false</c>.
     /// </summary>
     public int MaxRetryAttempts { get; set; } = 3;
 

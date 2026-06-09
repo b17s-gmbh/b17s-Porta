@@ -18,7 +18,8 @@ builder.Services.AddPortaCore(options => {
 
     // App-wide ceiling for per-endpoint .WithRetries(n). Each endpoint retries
     // min(n, MaxRetryAttempts) times; endpoints that never call .WithRetries(...)
-    // do not retry. Used for the retry pipeline when retries are enabled (default: 3).
+    // do not retry. Set to 0 to disable retries app-wide, including for endpoints
+    // that opt in via .WithRetries(...) (default: 3).
     options.MaxRetryAttempts = 3;
 
     // Refresh the user token and retry once on a backend 401 (default: true)
@@ -173,8 +174,8 @@ builder.Services.AddPortaAuthentication(builder.Configuration, configSectionName
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `EnableRetry` | `true` | Retry transient token-endpoint failures with exponential backoff. |
-| `MaxRetryAttempts` | `3` | Max retry attempts. |
+| `EnableRetry` | `true` | Retry transient token-endpoint failures with exponential backoff. Set to `false` to disable retries. |
+| `MaxRetryAttempts` | `3` | Max retry attempts. Must be ≥ 1 when `EnableRetry` is `true` (validated at startup). |
 | `InitialDelaySeconds` | `1.0` | Base for exponential backoff (`delay = InitialDelaySeconds * 2^attempt`). |
 | `UseJitter` | `true` | Add randomization to backoff to spread thundering-herd retries. |
 | `EnableCircuitBreaker` | `true` | Open the breaker when the IdP is consistently failing. |
@@ -258,11 +259,12 @@ Key settings that should be configured before a production deployment. The libra
 | Setting | Environment Variable | Enforced? | Description |
 |---------|---------------------|-----------|-------------|
 | `SessionAuthentication:Authority` / `ClientId` / `ClientSecret` | `SessionAuthentication__Authority`, etc. | **Yes** - `IValidateOptions<SessionAuthenticationConfiguration>` with `ValidateOnStart`. | Required to start the app when `AddPortaAuthentication` is called. `Authority` must be an absolute http(s) URL. |
-| `SessionAuthentication:RequireHttpsMetadata` | - | No (default `true`). | Leave `true` in production. Disabling allows the OIDC handler to fetch metadata over plain HTTP. |
+| `SessionAuthentication:RequireHttpsMetadata` | - | **Yes** outside Development - `CookieSecurityStartupCheck` throws (event `Porta/14703`) when set to `false`; warns (`Porta/14702`) in Development. Default `true`. | Leave `true` in production. Disabling allows the OIDC handler to fetch metadata over plain HTTP, opening a man-in-the-middle window. |
+| `SessionAuthentication:Cookie:SecurePolicy` | - | **Yes** outside Development - `CookieSecurityStartupCheck` throws (event `Porta/14701`) when not `Always`; warns (`Porta/14700`) in Development. Default `Always`. | Keep `Always` in production (see [Cookie Security](#cookie-security)). Other values can emit the auth cookie without the `Secure` attribute. |
 | `PortaCore:TrustedHosts` (when any endpoint uses `.WithUserToken()`) | `PortaCore__TrustedHosts__0`, etc. | **Yes** - startup throws if a `WithUserToken()` backend host is not in the list. | See [Trusted Hosts](authentication.md#trusted-hosts). |
 | `AllowedRedirectHosts` on `UseOidcLogin` / `UseOidcLogout` | - (configured in code, not via a config section) | Enforced at request time, not startup. | Per-call option on `OidcLoginOptions` / `OidcLogoutOptions`. When empty, only same-origin redirects are accepted; loopback is only accepted when `AllowLocalhost = true` (default `false`). External hosts are rejected with HTTP 400. There is no top-level `Logout:AllowedRedirectHosts` config section. |
 | `ConnectionStrings:dataprotection-db` | `ConnectionStrings__dataprotection-db` | Indirect - `AddPortaDataProtectionWithEntityFrameworkStore` resolves the connection string and fails at startup when missing. | PostgreSQL connection for Data Protection keys. Required for HA - see [HA Deployment](ha-deployment.md). |
-| HA prerequisites (shared `IDistributedCache`, persistent DP keys) | - | Soft - startup **warnings** `Porta/14500`/`14501`/`14502`/`14503`/`14504`/`14505` log when missing. | See [HA Deployment](ha-deployment.md). |
+| HA prerequisites (shared `IDistributedCache`, persistent DP keys) | - | Mixed - a shared `IDistributedCache` (`Porta/14500`) and persistent DP keys (`Porta/14501`) being missing are **warnings only**. But unencrypted DP keys, a hollow key-encryption attestation, and an explicit in-process refresh lock alongside a distributed cache **throw outside Development** (events `Porta/14503`, `Porta/14507`, `Porta/14505`); they warn (`Porta/14502`, `Porta/14506`, `Porta/14504`) in Development. | See [HA Deployment](ha-deployment.md). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `OTEL_EXPORTER_OTLP_ENDPOINT` | No - read by the OTel SDK. | OpenTelemetry collector endpoint. When set, metrics and traces are exported automatically. |
 | `SessionAuthentication:SessionKeys:Prefix` | - | No. | Session key prefix for Redis. Default: `porta`. Change when sharing Redis with other BFF instances. |
 
@@ -318,6 +320,8 @@ Additional startup failures from other parts of the wiring:
 - `UseOidcLogout(options.PerformGlobalLogout = true)` is called against an OIDC handler configured with `SaveTokens = false` - `id_token_hint` cannot be attached to the end-session request.
 - `UseSessionAdmin` is called without a `RequirePolicy`, or the named policy is not registered.
 - `AddPortaDataProtectionWithEntityFrameworkStore` cannot resolve its connection string.
+- Outside Development, `CookieSecurityStartupCheck` throws when `SessionAuthentication.RequireHttpsMetadata` is `false` (event `Porta/14703`) or `Cookie.SecurePolicy` is not `Always` (event `Porta/14701`). Both warn instead of throwing in Development.
+- Outside Development, `HaConfigurationStartupCheck` throws when Data Protection key persistence is configured but keys are unencrypted at rest with no acknowledgement (event `Porta/14503`), a `protectKeys` action was supplied that registered no `IXmlEncryptor` (event `Porta/14507`), or an in-process refresh lock was registered explicitly while a distributed cache is present (event `Porta/14505`). All three warn instead of throwing in Development. Acknowledge the unencrypted-keys / in-process-lock cases with `AcknowledgeUnencryptedDataProtectionKeys(...)` / `AcknowledgeInProcessRefreshLock(...)`. See [HA Deployment](ha-deployment.md).
 
 ### Logging
 

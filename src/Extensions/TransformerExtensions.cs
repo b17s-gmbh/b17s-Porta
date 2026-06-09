@@ -197,6 +197,31 @@ public sealed class PassThroughEndpointBuilder<TResponse>
         return this;
     }
 
+    /// <summary>Specifies a GET backend URL.</summary>
+    /// <param name="url">Backend URL (supports Kubernetes service names: http://user-service/api/users)</param>
+    /// <param name="contentType">Content type for serializing request body. Default: JSON</param>
+    public PassThroughEndpointBuilder<TResponse> ToGet(string url, ContentType contentType = ContentType.Json) => ToBackend("GET", url, contentType);
+
+    /// <summary>Specifies a POST backend URL.</summary>
+    /// <param name="url">Backend URL (supports Kubernetes service names: http://user-service/api/users)</param>
+    /// <param name="contentType">Content type for serializing request body. Default: JSON</param>
+    public PassThroughEndpointBuilder<TResponse> ToPost(string url, ContentType contentType = ContentType.Json) => ToBackend("POST", url, contentType);
+
+    /// <summary>Specifies a PUT backend URL.</summary>
+    /// <param name="url">Backend URL (supports Kubernetes service names: http://user-service/api/users)</param>
+    /// <param name="contentType">Content type for serializing request body. Default: JSON</param>
+    public PassThroughEndpointBuilder<TResponse> ToPut(string url, ContentType contentType = ContentType.Json) => ToBackend("PUT", url, contentType);
+
+    /// <summary>Specifies a DELETE backend URL.</summary>
+    /// <param name="url">Backend URL (supports Kubernetes service names: http://user-service/api/users)</param>
+    /// <param name="contentType">Content type for serializing request body. Default: JSON</param>
+    public PassThroughEndpointBuilder<TResponse> ToDelete(string url, ContentType contentType = ContentType.Json) => ToBackend("DELETE", url, contentType);
+
+    /// <summary>Specifies a PATCH backend URL.</summary>
+    /// <param name="url">Backend URL (supports Kubernetes service names: http://user-service/api/users)</param>
+    /// <param name="contentType">Content type for serializing request body. Default: JSON</param>
+    public PassThroughEndpointBuilder<TResponse> ToPatch(string url, ContentType contentType = ContentType.Json) => ToBackend("PATCH", url, contentType);
+
     /// <summary>Forwards to backend using the same HTTP method as the incoming request.</summary>
     public PassThroughEndpointBuilder<TResponse> ToAny(string url)
     {

@@ -104,6 +104,40 @@ public class SessionAuthenticationConfigurationValidatorTests
             f => f.Contains("SameSite='None' requires", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void EnabledRetry_WithNonPositiveMaxRetryAttempts_Fails(int attempts)
+    {
+        // Polly rejects MaxRetryAttempts < 1 when the token pipeline is built,
+        // which would otherwise surface as an OptionsValidationException on the
+        // first token call instead of at startup.
+        var options = ValidBaseline();
+        options.Resilience.EnableRetry = true;
+        options.Resilience.MaxRetryAttempts = attempts;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("Resilience.MaxRetryAttempts", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DisabledRetry_IgnoresMaxRetryAttempts()
+    {
+        // With EnableRetry=false the attempt count is never applied, so a zero
+        // value (a plausible way to express "no retries") must not fail startup.
+        var options = ValidBaseline();
+        options.Resilience.EnableRetry = false;
+        options.Resilience.MaxRetryAttempts = 0;
+
+        var result = Validate(options);
+
+        Assert.True(result.Succeeded, string.Join("; ", result.Failures ?? []));
+    }
+
     [Fact]
     public void OidcAuthOptionsValidator_AppliesSameRule()
     {

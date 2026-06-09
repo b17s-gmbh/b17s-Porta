@@ -9,7 +9,7 @@ Thank you for helping keep `b17s.Porta` and its users safe.
 Use one of these private channels instead:
 
 **Preferred - GitHub Private Vulnerability Reporting:** open a report at
-   <https://github.com/b17s-gmbh/b17s-BFF/security/advisories/new>.
+   <https://github.com/b17s-gmbh/b17s-Porta/security/advisories/new>.
    This routes directly to the maintainers and lets us collaborate on a fix and an embargoed advisory before disclosure.
 
 When you report, please include as much of the following as you can:

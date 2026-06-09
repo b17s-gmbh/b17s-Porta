@@ -21,7 +21,7 @@
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://www.nuget.org/packages/b17s.Porta/</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/b17s-gmbh/b17s-BFF</RepositoryUrl>
+    <RepositoryUrl>https://github.com/b17s-gmbh/b17s-Porta</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <IncludeSymbols>true</IncludeSymbols>

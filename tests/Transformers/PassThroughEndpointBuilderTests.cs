@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 
@@ -188,6 +189,43 @@ public sealed class PassThroughEndpointBuilderTests
             var recorded = Assert.Single(backend.RecordedCalls);
             Assert.Equal("GET", recorded.Request.Method);
             Assert.Equal("https://backend.test/orders", recorded.Request.Url);
+        }
+
+        [Theory]
+        [InlineData("GET")]
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [InlineData("DELETE")]
+        [InlineData("PATCH")]
+        public async Task ToVerb_SetsBackendMethodAndUrl_OnBackendRequest(string method)
+        {
+            // The To* shorthands are what the README and docs use on every MapPassThrough
+            // example. They were missing from the wrapper once (only ToBackend/ToAny/ToGraphQL
+            // were re-exposed), so each verb gets an end-to-end lock-in.
+            var backend = new MockBackendCaller()
+                .SetupResponse("https://backend.test/x", new EchoResponse { Echoed = "ok" });
+            using var bff = await CreateBffAsync(endpoints =>
+            {
+                var builder = endpoints.MapPassThrough<EchoResponse>().FromRoute(method, "/api/x");
+                _ = method switch
+                {
+                    "GET" => builder.ToGet("https://backend.test/x"),
+                    "POST" => builder.ToPost("https://backend.test/x"),
+                    "PUT" => builder.ToPut("https://backend.test/x"),
+                    "DELETE" => builder.ToDelete("https://backend.test/x"),
+                    "PATCH" => builder.ToPatch("https://backend.test/x"),
+                    _ => throw new InvalidOperationException(),
+                };
+                builder.AllowAnonymous().Build();
+            }, backend);
+
+            using var request = new HttpRequestMessage(new HttpMethod(method), "/api/x");
+            var response = await bff.GetTestServer().CreateClient().SendAsync(request, TestContext.Current.CancellationToken);
+
+            response.EnsureSuccessStatusCode();
+            var recorded = Assert.Single(backend.RecordedCalls);
+            Assert.Equal(method, recorded.Request.Method);
+            Assert.Equal("https://backend.test/x", recorded.Request.Url);
         }
 
         [Fact]
@@ -387,6 +425,42 @@ public sealed class PassThroughEndpointBuilderTests
 
             response.EnsureSuccessStatusCode();
             Assert.Single(backend.RecordedCalls);
+        }
+    }
+
+    public sealed class VocabularyParity
+    {
+        [Fact]
+        public void PassThroughBuilder_ReExposes_EveryFluentMethod_OfTheInnerBuilder()
+        {
+            // PassThroughEndpointBuilder wraps TransformerEndpointBuilder via hand-written
+            // delegation rather than inheritance, so every fluent method added to the inner
+            // builder must be re-exposed manually. This has regressed before: the docs used
+            // ToGet/ToPost/... on MapPassThrough while the wrapper only had ToBackend, so the
+            // README's front-page example didn't compile.
+            string[] intentionallyAbsent =
+            [
+                // Named multi-backend aggregation needs a transformer to merge results;
+                // a zero-code pass-through has exactly one backend.
+                "ToBackends",
+            ];
+
+            var fluentNames = new[] { typeof(BffEndpointBuilderBase<>), typeof(TransformerEndpointBuilderBase<,>) }
+                .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly))
+                .Where(m => m.ReturnType.IsGenericParameter && m.ReturnType.Name == "TBuilder")
+                .Select(m => m.Name)
+                .Distinct()
+                .Except(intentionallyAbsent);
+
+            var passThroughNames = typeof(PassThroughEndpointBuilder<>)
+                .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+                .Select(m => m.Name)
+                .ToHashSet();
+
+            var missing = fluentNames.Where(name => !passThroughNames.Contains(name)).ToList();
+            Assert.True(missing.Count == 0,
+                $"PassThroughEndpointBuilder is missing fluent methods documented on the inner builder: {string.Join(", ", missing)}. " +
+                "Add delegating shorthands (or list them in intentionallyAbsent with a reason).");
         }
     }
 
