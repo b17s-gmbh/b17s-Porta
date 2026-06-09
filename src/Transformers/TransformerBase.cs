@@ -246,6 +246,38 @@ public abstract class TransformerBase<TRequest, TResponse> : ITransformer<TReque
         await WriteErrorResponseAsync(context, clientStatus, clientMessage);
     }
 
+    /// <summary>
+    /// Writes a failed <see cref="GraphQLResult{TData}"/> as a client error response, surfacing the
+    /// GraphQL-mapped status (e.g. 404 for <c>NOT_FOUND</c>, 401 for <c>UNAUTHENTICATED</c>,
+    /// 403 for <c>FORBIDDEN</c>) verbatim. Prefer this over
+    /// <see cref="WriteBackendErrorResponseAsync{T}"/> for GraphQL results: an application-level
+    /// GraphQL auth error arrives over HTTP 200 and is the user's authorization being denied, so it
+    /// must reach the client as the documented 401/403, not the 502 that
+    /// <see cref="WriteBackendErrorResponseAsync{T}"/> applies to a backend-credential failure.
+    /// (A transport-level backend 401/403 is already neutralized to 502 by the backend error mapper
+    /// before it ever becomes a <see cref="GraphQLResult{TData}"/>.) Mapped 5xx error text is logged
+    /// server-side only and replaced with a generic message, matching the backend writer.
+    /// </summary>
+    /// <typeparam name="TData">The GraphQL data type.</typeparam>
+    /// <param name="context">The transformer context.</param>
+    /// <param name="result">The failed GraphQL result to relay.</param>
+    protected async Task WriteGraphQLErrorResponseAsync<TData>(TransformerContext context, GraphQLResult<TData> result)
+    {
+        var (clientStatus, clientMessage) = result.MappedStatusCode switch
+        {
+            >= 500 => (result.MappedStatusCode, "Backend service error"),
+            _ => (result.MappedStatusCode, result.Error ?? "GraphQL request failed")
+        };
+
+        // Mapped 5xx detail can echo backend/deserializer text; keep it server-side only.
+        if (result.MappedStatusCode >= 500 && !string.IsNullOrEmpty(result.Error))
+        {
+            TransformerLogging.BackendErrorMasked(Logger, result.MappedStatusCode, result.Error);
+        }
+
+        await WriteErrorResponseAsync(context, clientStatus, clientMessage);
+    }
+
     private static bool TryGetBackendRequest(TransformerContext context, [NotNullWhen(true)] out BackendRequest? backendRequest)
     {
         if (context.Properties.TryGetValue("BackendRequest", out var obj) && obj is BackendRequest request)
@@ -481,6 +513,38 @@ public abstract class TransformerBase<TResponse> : ITransformer<TResponse>
         if (result.StatusCode >= 500 && !string.IsNullOrEmpty(result.Error))
         {
             TransformerLogging.BackendErrorMasked(Logger, result.StatusCode, result.Error);
+        }
+
+        await WriteErrorResponseAsync(context, clientStatus, clientMessage);
+    }
+
+    /// <summary>
+    /// Writes a failed <see cref="GraphQLResult{TData}"/> as a client error response, surfacing the
+    /// GraphQL-mapped status (e.g. 404 for <c>NOT_FOUND</c>, 401 for <c>UNAUTHENTICATED</c>,
+    /// 403 for <c>FORBIDDEN</c>) verbatim. Prefer this over
+    /// <see cref="WriteBackendErrorResponseAsync{T}"/> for GraphQL results: an application-level
+    /// GraphQL auth error arrives over HTTP 200 and is the user's authorization being denied, so it
+    /// must reach the client as the documented 401/403, not the 502 that
+    /// <see cref="WriteBackendErrorResponseAsync{T}"/> applies to a backend-credential failure.
+    /// (A transport-level backend 401/403 is already neutralized to 502 by the backend error mapper
+    /// before it ever becomes a <see cref="GraphQLResult{TData}"/>.) Mapped 5xx error text is logged
+    /// server-side only and replaced with a generic message, matching the backend writer.
+    /// </summary>
+    /// <typeparam name="TData">The GraphQL data type.</typeparam>
+    /// <param name="context">The transformer context.</param>
+    /// <param name="result">The failed GraphQL result to relay.</param>
+    protected async Task WriteGraphQLErrorResponseAsync<TData>(TransformerContext context, GraphQLResult<TData> result)
+    {
+        var (clientStatus, clientMessage) = result.MappedStatusCode switch
+        {
+            >= 500 => (result.MappedStatusCode, "Backend service error"),
+            _ => (result.MappedStatusCode, result.Error ?? "GraphQL request failed")
+        };
+
+        // Mapped 5xx detail can echo backend/deserializer text; keep it server-side only.
+        if (result.MappedStatusCode >= 500 && !string.IsNullOrEmpty(result.Error))
+        {
+            TransformerLogging.BackendErrorMasked(Logger, result.MappedStatusCode, result.Error);
         }
 
         await WriteErrorResponseAsync(context, clientStatus, clientMessage);

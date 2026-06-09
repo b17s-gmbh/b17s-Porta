@@ -230,6 +230,69 @@ public sealed class TransformerBaseTests
         Assert.Contains("Backend service error", body);
     }
 
+    [Theory]
+    [InlineData("UNAUTHENTICATED", 401)]
+    [InlineData("UNAUTHORIZED", 401)]
+    [InlineData("FORBIDDEN", 403)]
+    [InlineData("ACCESS_DENIED", 403)]
+    public async Task WriteGraphQLErrorResponseAsync_ApplicationAuthError_SurfacesDocumented401Or403(string code, int expectedStatus)
+    {
+        // Regression: an application-level GraphQL auth error (HTTP 200 + UNAUTHENTICATED/FORBIDDEN)
+        // must reach the client as the documented 401/403 - NOT the 502 that
+        // WriteBackendErrorResponseAsync(result.ToBackendResult()) would have produced.
+        var http = TestFixtures.CreateHttpContext();
+        var context = TestFixtures.CreateTransformerContext(httpContext: http, cancellationToken: TestContext.Current.CancellationToken);
+        var sut = new ExposedTransformer<object, object>();
+
+        var result = GraphQLResult<string>.FromGraphQLErrors(new[]
+        {
+            new GraphQLError { Message = "not authorized", Extensions = new GraphQLErrorExtensions { Code = code } },
+        });
+        await sut.WriteGraphQLErrorResponseForTestAsync(context, result);
+
+        Assert.Equal(expectedStatus, http.Response.StatusCode);
+        var body = await TestFixtures.GetResponseBodyAsync(http);
+        Assert.Contains("not authorized", body);
+    }
+
+    [Fact]
+    public async Task WriteGraphQLErrorResponseAsync_RelaysMappedClientStatusAndMessageVerbatim()
+    {
+        var http = TestFixtures.CreateHttpContext();
+        var context = TestFixtures.CreateTransformerContext(httpContext: http, cancellationToken: TestContext.Current.CancellationToken);
+        var sut = new ExposedTransformer<object, object>();
+
+        var result = GraphQLResult<string>.FromGraphQLErrors(new[]
+        {
+            new GraphQLError { Message = "Product not found", Extensions = new GraphQLErrorExtensions { Code = "NOT_FOUND" } },
+        });
+        await sut.WriteGraphQLErrorResponseForTestAsync(context, result);
+
+        Assert.Equal(404, http.Response.StatusCode);
+        var body = await TestFixtures.GetResponseBodyAsync(http);
+        Assert.Contains("Product not found", body);
+    }
+
+    [Fact]
+    public async Task WriteGraphQLErrorResponseAsync_Mapped5xx_MasksDetailFromClient()
+    {
+        // 5xx detail (e.g. an INTERNAL_SERVER_ERROR message) is masked, matching the backend writer.
+        var http = TestFixtures.CreateHttpContext();
+        var context = TestFixtures.CreateTransformerContext(httpContext: http, cancellationToken: TestContext.Current.CancellationToken);
+        var sut = new ExposedTransformer<object, object>();
+
+        var result = GraphQLResult<string>.FromGraphQLErrors(new[]
+        {
+            new GraphQLError { Message = "stack trace: secret detail", Extensions = new GraphQLErrorExtensions { Code = "INTERNAL_SERVER_ERROR" } },
+        });
+        await sut.WriteGraphQLErrorResponseForTestAsync(context, result);
+
+        Assert.Equal(500, http.Response.StatusCode);
+        var body = await TestFixtures.GetResponseBodyAsync(http);
+        Assert.DoesNotContain("secret detail", body);
+        Assert.Contains("Backend service error", body);
+    }
+
     [Fact]
     public void GetRequiredClaim_BeforeLoggerInit_DoesNotThrow()
     {
@@ -444,6 +507,9 @@ public sealed class TransformerBaseTests
 
         public Task WriteBackendErrorResponseForTestAsync<T>(TransformerContext context, BackendResult<T> result)
             => WriteBackendErrorResponseAsync(context, result);
+
+        public Task WriteGraphQLErrorResponseForTestAsync<TData>(TransformerContext context, GraphQLResult<TData> result)
+            => WriteGraphQLErrorResponseAsync(context, result);
     }
 
     private sealed class TestPassThrough : PassThroughTransformer<EchoResponse>

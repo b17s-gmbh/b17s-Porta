@@ -41,7 +41,11 @@ public class ProductTransformer : TransformerBase<ProductDto>
 
         if (!result.IsSuccess)
         {
-            await WriteBackendErrorResponseAsync(context, result.ToBackendResult());
+            // Surfaces the GraphQL-mapped status (404, 401, 403, ...) verbatim. Use this rather
+            // than WriteBackendErrorResponseAsync for GraphQL results: an application-level auth
+            // error (UNAUTHENTICATED/FORBIDDEN over HTTP 200) is the user's, and must reach the
+            // client as 401/403 instead of the 502 the backend writer applies.
+            await WriteGraphQLErrorResponseAsync(context, result);
             return default!;
         }
 
@@ -96,6 +100,14 @@ GraphQL returns HTTP 200 even with errors. The library handles this:
 | `INTERNAL_SERVER_ERROR` | 500 |
 | `TIMEOUT`, `GATEWAY_TIMEOUT` | 504 |
 | `TOO_MANY_REQUESTS` | 429 |
+
+> **Relaying GraphQL errors:** use `WriteGraphQLErrorResponseAsync(context, result)` to surface
+> these mapped statuses to the client. It relays the mapped status verbatim — including a genuine
+> user-facing 401/403 from an application-level `UNAUTHENTICATED`/`FORBIDDEN` error — while masking
+> 5xx detail. Do **not** route GraphQL results through `WriteBackendErrorResponseAsync`: that writer
+> is for relayed *backend transport* statuses and remaps 401/403 to 502 (a BFF-credential failure),
+> which would hide the documented GraphQL auth statuses. A transport-level backend 401/403 is
+> already neutralized to 502 before it reaches your transformer.
 
 ## Parallel GraphQL Queries
 
@@ -159,7 +171,7 @@ public class CreateOrderTransformer : TransformerBase<CreateOrderRequest, OrderD
 
         if (!result.IsSuccess)
         {
-            await WriteBackendErrorResponseAsync(context, result.ToBackendResult());
+            await WriteGraphQLErrorResponseAsync(context, result);
             return default!;
         }
 

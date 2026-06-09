@@ -286,6 +286,46 @@ public sealed class TransformerBaseNoBodyTests
         Assert.Equal("Backend request failed", json.RootElement.GetProperty("error").GetString());
     }
 
+    [Theory]
+    [InlineData("UNAUTHENTICATED", 401)]
+    [InlineData("FORBIDDEN", 403)]
+    public async Task WriteGraphQLErrorResponseAsync_ApplicationAuthError_SurfacesDocumented401Or403(string code, int expectedStatus)
+    {
+        // Mirrors the body-bearing class: GraphQL application auth errors surface as 401/403, not 502.
+        var http = TestFixtures.CreateHttpContext();
+        var context = TestFixtures.CreateTransformerContext(httpContext: http, cancellationToken: TestContext.Current.CancellationToken);
+        var sut = new ExposedTransformer<EchoResponse>();
+
+        var result = GraphQLResult<string>.FromGraphQLErrors(new[]
+        {
+            new GraphQLError { Message = "denied", Extensions = new GraphQLErrorExtensions { Code = code } },
+        });
+        await sut.WriteGraphQLErrorResponseForTestAsync(context, result);
+
+        Assert.Equal(expectedStatus, http.Response.StatusCode);
+        var body = await TestFixtures.GetResponseBodyAsync(http);
+        Assert.Contains("denied", body);
+    }
+
+    [Fact]
+    public async Task WriteGraphQLErrorResponseAsync_Mapped5xx_MasksDetailFromClient()
+    {
+        var http = TestFixtures.CreateHttpContext();
+        var context = TestFixtures.CreateTransformerContext(httpContext: http, cancellationToken: TestContext.Current.CancellationToken);
+        var sut = new ExposedTransformer<EchoResponse>();
+
+        var result = GraphQLResult<string>.FromGraphQLErrors(new[]
+        {
+            new GraphQLError { Message = "secret detail", Extensions = new GraphQLErrorExtensions { Code = "INTERNAL_SERVER_ERROR" } },
+        });
+        await sut.WriteGraphQLErrorResponseForTestAsync(context, result);
+
+        Assert.Equal(500, http.Response.StatusCode);
+        var body = await TestFixtures.GetResponseBodyAsync(http);
+        Assert.DoesNotContain("secret detail", body);
+        Assert.Contains("Backend service error", body);
+    }
+
     // -----------------------------
     // Test doubles
     // -----------------------------
@@ -333,5 +373,8 @@ public sealed class TransformerBaseNoBodyTests
 
         public Task WriteBackendErrorResponseForTestAsync<T>(TransformerContext context, BackendResult<T> result)
             => WriteBackendErrorResponseAsync(context, result);
+
+        public Task WriteGraphQLErrorResponseForTestAsync<TData>(TransformerContext context, GraphQLResult<TData> result)
+            => WriteGraphQLErrorResponseAsync(context, result);
     }
 }
