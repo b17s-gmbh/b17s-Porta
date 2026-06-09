@@ -281,6 +281,89 @@ public sealed class BackendCallerGraphQLAndRawTests
         Assert.Equal(404, result.MappedStatusCode); // NOT_FOUND -> 404, not the HTTP 400
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "UNAUTHENTICATED")]
+    [InlineData(HttpStatusCode.Unauthorized, "NOT_FOUND")]
+    [InlineData(HttpStatusCode.Forbidden, "FORBIDDEN")]
+    public async Task GraphQL_TransportAuthFailureWithErrorsEnvelope_StillMappedTo502(
+        HttpStatusCode backendStatus, string envelopeCode)
+    {
+        // M2 regression: a backend rejecting the BFF's forwarded credential commonly answers
+        // HTTP 401 *with* a GraphQL errors envelope ({"errors":[{"extensions":{"code":
+        // "UNAUTHENTICATED"}}]}). The envelope-wins rule must not bypass the IBackendErrorMapper
+        // for transport 401/403 - otherwise the client receives a 401 and signs the user out
+        // over a backend credential problem. The envelope's own code is irrelevant here: the
+        // transport status is the credential rejection.
+        var body = """{"errors":[{"message":"Access denied","extensions":{"code":"__CODE__"}}]}"""
+            .Replace("__CODE__", envelopeCode);
+        var handler = new StubHandler(backendStatus, body, "application/json");
+        var caller = CreateCaller(handler);
+
+        var request = new BackendRequest { Method = "POST", Url = "https://backend.test/graphql" };
+        var result = await caller.CallGraphQLAsync<Product>(
+            request, "{ x }", null, "x",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(502, result.HttpStatusCode);
+        Assert.Equal(502, result.MappedStatusCode);
+        Assert.Equal(BackendErrorType.ServerError, result.ErrorType);
+        // The envelope is suppressed client-side (logged server-side only).
+        Assert.Null(result.Errors);
+
+        // The ToBackendResult round-trip must not resurrect the 401 either.
+        var backendResult = result.ToBackendResult();
+        Assert.Equal(502, backendResult.StatusCode);
+    }
+
+    [Fact]
+    public async Task GraphQL_ApplicationLevelAuthErrorOverHttp200_SurfacesEnvelope401()
+    {
+        // The counterpart guarantee: an UNAUTHENTICATED envelope over HTTP 200 is an
+        // application-level denial of the *user* (the transport credential was accepted), so it
+        // must keep surfacing as the envelope-mapped 401 - the mapper only guards transport
+        // 401/403.
+        var handler = new StubHandler(
+            HttpStatusCode.OK,
+            """{"errors":[{"message":"Not signed in","extensions":{"code":"UNAUTHENTICATED"}}]}""",
+            "application/json");
+        var caller = CreateCaller(handler);
+
+        var request = new BackendRequest { Method = "POST", Url = "https://backend.test/graphql" };
+        var result = await caller.CallGraphQLAsync<Product>(
+            request, "{ x }", null, "x",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(401, result.MappedStatusCode);
+        Assert.Equal(BackendErrorType.AuthenticationError, result.ErrorType);
+        Assert.NotNull(result.Errors);
+        Assert.Equal("Not signed in", result.Errors![0].Message);
+    }
+
+    [Fact]
+    public async Task GraphQL_TransportAuthFailure_PassThroughMapper_EnvelopeMappingStillApplies()
+    {
+        // A custom mapper that passes 401 through unchanged opts back into the envelope-wins
+        // rule: the structured GraphQL errors (and their code -> status mapping) surface instead
+        // of a bare transport 401.
+        var handler = new StubHandler(
+            HttpStatusCode.Unauthorized,
+            """{"errors":[{"message":"Token rejected","extensions":{"code":"UNAUTHENTICATED"}}]}""",
+            "application/json");
+        var caller = CreateCaller(handler, errorMapper: new PassThroughBackendErrorMapper());
+
+        var request = new BackendRequest { Method = "POST", Url = "https://backend.test/graphql" };
+        var result = await caller.CallGraphQLAsync<Product>(
+            request, "{ x }", null, "x",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(401, result.MappedStatusCode);
+        Assert.NotNull(result.Errors);
+        Assert.Equal("Token rejected", result.Errors![0].Message);
+    }
+
     [Fact]
     public async Task GraphQL_BackendNetworkFailure_ReturnsFromBackendError()
     {
@@ -921,7 +1004,8 @@ public sealed class BackendCallerGraphQLAndRawTests
         long maxBackendResponseBytes = 10 * 1024 * 1024,
         IBackendAuthHandler? authHandler = null,
         ILogger<BackendCaller>? logger = null,
-        bool enableTelemetry = true)
+        bool enableTelemetry = true,
+        IBackendErrorMapper? errorMapper = null)
     {
         var registry = new BackendAuthHandlerRegistry();
         registry.Register(new NoneAuthHandler());
@@ -943,7 +1027,8 @@ public sealed class BackendCallerGraphQLAndRawTests
             new ContentSerializer(),
             metrics: null,
             logger: logger ?? NullLogger<BackendCaller>.Instance,
-            coreOptions: options);
+            coreOptions: options,
+            errorMapper: errorMapper);
     }
 
     private sealed record Product

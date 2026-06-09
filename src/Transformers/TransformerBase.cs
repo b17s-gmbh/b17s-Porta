@@ -254,8 +254,9 @@ public abstract class TransformerBase<TRequest, TResponse> : ITransformer<TReque
     /// GraphQL auth error arrives over HTTP 200 and is the user's authorization being denied, so it
     /// must reach the client as the documented 401/403, not the 502 that
     /// <see cref="WriteBackendErrorResponseAsync{T}"/> applies to a backend-credential failure.
-    /// (A transport-level backend 401/403 is already neutralized to 502 by the backend error mapper
-    /// before it ever becomes a <see cref="GraphQLResult{TData}"/>.) Mapped 5xx error text is logged
+    /// (A transport-level backend 401/403 - even one carrying an <c>errors</c> envelope - is already
+    /// routed through the backend error mapper, by default neutralized to 502, before it ever
+    /// becomes a <see cref="GraphQLResult{TData}"/>.) Mapped 5xx error text is logged
     /// server-side only and replaced with a generic message, matching the backend writer.
     /// </summary>
     /// <typeparam name="TData">The GraphQL data type.</typeparam>
@@ -526,8 +527,9 @@ public abstract class TransformerBase<TResponse> : ITransformer<TResponse>
     /// GraphQL auth error arrives over HTTP 200 and is the user's authorization being denied, so it
     /// must reach the client as the documented 401/403, not the 502 that
     /// <see cref="WriteBackendErrorResponseAsync{T}"/> applies to a backend-credential failure.
-    /// (A transport-level backend 401/403 is already neutralized to 502 by the backend error mapper
-    /// before it ever becomes a <see cref="GraphQLResult{TData}"/>.) Mapped 5xx error text is logged
+    /// (A transport-level backend 401/403 - even one carrying an <c>errors</c> envelope - is already
+    /// routed through the backend error mapper, by default neutralized to 502, before it ever
+    /// becomes a <see cref="GraphQLResult{TData}"/>.) Mapped 5xx error text is logged
     /// server-side only and replaced with a generic message, matching the backend writer.
     /// </summary>
     /// <typeparam name="TData">The GraphQL data type.</typeparam>

@@ -107,7 +107,9 @@ GraphQL returns HTTP 200 even with errors. The library handles this:
 > 5xx detail. Do **not** route GraphQL results through `WriteBackendErrorResponseAsync`: that writer
 > is for relayed *backend transport* statuses and remaps 401/403 to 502 (a BFF-credential failure),
 > which would hide the documented GraphQL auth statuses. A transport-level backend 401/403 is
-> already neutralized to 502 before it reaches your transformer.
+> already neutralized to 502 before it reaches your transformer — even when the backend attaches a
+> GraphQL `errors` envelope to that 401/403 response (a custom `IBackendErrorMapper` that passes
+> the status through re-enables the envelope's code → status mapping).
 
 ## Parallel GraphQL Queries
 

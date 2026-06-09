@@ -341,8 +341,34 @@ public sealed class BackendCaller(
             }
         }
 
+        // A transport-level 401/403 means the backend rejected the BFF's forwarded credential -
+        // even when a GraphQL `errors` envelope rides along (many servers pair HTTP 401 with
+        // {"errors":[{"extensions":{"code":"UNAUTHENTICATED"}}]} for the same rejection). Consult
+        // the IBackendErrorMapper BEFORE the envelope-wins rule below, so the default 401/403 -> 502
+        // neutralization cannot be bypassed by the envelope; otherwise the client would see the 401
+        // and sign the user out over a backend credential problem. A custom mapper that passes the
+        // status through unchanged opts back into the envelope's code -> status mapping. (An
+        // application-level auth error - UNAUTHENTICATED over HTTP 200 - is the user's denial and
+        // still surfaces via the envelope below.)
+        if (statusCode is 401 or 403)
+        {
+            var mapped = MapHttpErrorToGraphQLResult<TResponse>(statusCode, response.ReasonPhrase, request);
+            if (mapped.HttpStatusCode != statusCode)
+            {
+                // Mapper rewrote the status: the envelope (if any) is suppressed client-side, so
+                // keep its detail visible to operators via the usual warning log.
+                if (graphqlResponse?.Errors is { Count: > 0 } suppressedErrors)
+                {
+                    logger.GraphQLErrorsReceived(logUrl, suppressedErrors.Count,
+                        string.Join("; ", suppressedErrors.Select(e => e.Message)));
+                }
+                return mapped;
+            }
+        }
+
         // A GraphQL `errors` envelope wins over the raw HTTP status: backends may return errors
         // alongside a non-2xx response, and the GraphQL code -> status mapping is more specific.
+        // (Transport 401/403 was already routed through the error mapper above.)
         if (graphqlResponse?.Errors is { Count: > 0 } graphqlErrors)
         {
             logger.GraphQLErrorsReceived(logUrl, graphqlErrors.Count,
