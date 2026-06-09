@@ -315,6 +315,34 @@ public class BasicAuthMiddlewareTests
         Assert.True(nextCalled);
     }
 
+    [Theory]
+    [InlineData("basic")]
+    [InlineData("BASIC")]
+    [InlineData("bAsIc")]
+    public async Task InvokeAsync_WithDifferentlyCasedScheme_PassesThrough(string scheme)
+    {
+        // Arrange - HTTP auth schemes are case-insensitive, so a valid credential
+        // with a differently-cased "Basic" scheme must still be accepted.
+        var nextCalled = false;
+        RequestDelegate next = _ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        };
+
+        var middleware = new BasicAuthMiddleware(next, NullLogger<BasicAuthMiddleware>.Instance);
+        var httpContext = CreateHttpContextWithRequireBasicAuth();
+        var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{ValidUsername}:{ValidPassword}"));
+        httpContext.Request.Headers.Authorization = $"{scheme} {credentials}";
+
+        // Act
+        await middleware.InvokeAsync(httpContext, _configuration);
+
+        // Assert
+        Assert.True(nextCalled);
+        Assert.Equal(ValidUsername, httpContext.Items["BasicAuthUsername"]);
+    }
+
     private static HttpContext CreateHttpContextWithBasicAuth(string username, string password)
     {
         var httpContext = CreateHttpContextWithRequireBasicAuth();

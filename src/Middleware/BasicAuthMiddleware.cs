@@ -62,7 +62,7 @@ public sealed class BasicAuthMiddleware(RequestDelegate next, ILogger<BasicAuthM
                 return;
             }
 
-            if (authHeaderValue.Scheme != BasicScheme || string.IsNullOrEmpty(authHeaderValue.Parameter))
+            if (!string.Equals(authHeaderValue.Scheme, BasicScheme, StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(authHeaderValue.Parameter))
             {
                 logger.InvalidAuthenticationScheme(authHeaderValue.Scheme);
                 await ChallengeAsync(context);
