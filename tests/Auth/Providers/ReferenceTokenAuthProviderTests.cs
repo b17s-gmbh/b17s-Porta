@@ -214,6 +214,30 @@ public sealed class ReferenceTokenAuthProviderFlowTests
     }
 
     [Fact]
+    public async Task IntrospectionUnavailable_FailsClosed_AndDoesNotNegativeCache()
+    {
+        // IntrospectTokenAsync returns null when introspection produced no answer (IdP 5xx
+        // after retries, missing endpoint, oversized body). That must not be negative-cached:
+        // an IdP outage would otherwise reject a VALID token for NegativeCacheDuration.
+        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var introspector = new FakeIntrospector(_ => null);
+        var sut = Build(introspector, OptionsFor(), cache);
+
+        var first = await sut.GetAuthContextAsync(WithAuthHeader(Bearer), TestContext.Current.CancellationToken);
+        var second = await sut.GetAuthContextAsync(WithAuthHeader(Bearer), TestContext.Current.CancellationToken);
+
+        Assert.False(first.IsAuthenticated);
+        Assert.False(second.IsAuthenticated);
+        // No negative cache entry was written, so the second call re-introspects —
+        // the token authenticates again as soon as the IdP recovers.
+        Assert.Equal(2, introspector.CallCount);
+        var stored = await cache.GetStringAsync(
+            ReferenceTokenAuthProvider.BuildIntrospectionCacheKey(Token),
+            TestContext.Current.CancellationToken);
+        Assert.Null(stored);
+    }
+
+    [Fact]
     public async Task IntrospectionException_FailsClosed_AndDoesNotCache()
     {
         // Network blips or 5xx from the IdP must not authenticate the request, and must

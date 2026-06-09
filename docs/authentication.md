@@ -69,7 +69,11 @@ Without these checks, **any active token issued by the same authority for any ot
 
 When the IdP returns `active: false`, the provider caches that result for
 `NegativeCacheDuration` so a stream of requests carrying the same revoked /
-expired / unknown token doesn't hammer the introspection endpoint. This is
+expired / unknown token doesn't hammer the introspection endpoint. Only that
+definitive verdict is negative-cached: if introspection *fails* (IdP error,
+unreachable endpoint, malformed response), the request is rejected without
+writing a cache entry, so a valid token authenticates again as soon as the
+IdP recovers rather than staying locked out for `NegativeCacheDuration`. This is
 necessary - without it, an attacker (or a buggy client) replaying one bad
 token can DoS the IdP - but it has a security cost: a token revoked at the
 IdP keeps being accepted "as still revoked" for at most this duration before

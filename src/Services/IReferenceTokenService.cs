@@ -10,7 +10,19 @@ public interface IReferenceTokenService
     /// </summary>
     /// <param name="token">The opaque token to introspect.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The introspection response, or null if introspection failed.</returns>
+    /// <returns>
+    /// The authorization server's verdict, or <see langword="null"/> if introspection produced
+    /// no verdict at all (authority not configured, introspection endpoint not discoverable,
+    /// non-success response from the identity provider, or a malformed/oversized response body).
+    /// </returns>
+    /// <remarks>
+    /// <see langword="null"/> means "unable to ask", not "token is inactive". A definitively
+    /// inactive token yields a non-null result with
+    /// <see cref="ReferenceTokenIntrospectionResult.IsActive"/> set to <see langword="false"/>.
+    /// Callers must keep the two apart: only a definitive inactive verdict is safe to cache
+    /// negatively, while a <see langword="null"/> (e.g. a transient identity-provider outage)
+    /// should fail closed for the current request and be retried on the next one.
+    /// </remarks>
     Task<ReferenceTokenIntrospectionResult?> IntrospectTokenAsync(string token, CancellationToken cancellationToken = default);
 }
 

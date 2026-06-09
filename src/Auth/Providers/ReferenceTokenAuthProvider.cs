@@ -95,7 +95,18 @@ public sealed class ReferenceTokenAuthProvider(
         {
             var introspectionResult = await referenceTokenService.IntrospectTokenAsync(token, cancellationToken);
 
-            if (introspectionResult?.IsActive != true)
+            if (introspectionResult is null)
+            {
+                // Introspection produced no verdict (IdP error after retries, missing endpoint,
+                // oversized response). Fail closed, but do NOT negative-cache: caching this as
+                // "inactive" would keep rejecting a valid token for NegativeCacheDuration during
+                // an IdP outage. The next request retries against the IdP instead.
+                logger.IntrospectionUnavailable();
+                authContext.AccessToken = null;
+                return authContext;
+            }
+
+            if (!introspectionResult.IsActive)
             {
                 logger.TokenNotActive();
                 authContext.AccessToken = null;
@@ -316,6 +327,10 @@ internal static partial class ReferenceTokenAuthProviderLogging
     [LoggerMessage(EventId = 13503, Level = LogLevel.Warning,
         Message = "Reference token is not active")]
     public static partial void TokenNotActive(this ILogger logger);
+
+    [LoggerMessage(EventId = 13510, Level = LogLevel.Warning,
+        Message = "Token introspection returned no verdict (IdP error or misconfiguration); failing closed without negative-caching")]
+    public static partial void IntrospectionUnavailable(this ILogger logger);
 
     [LoggerMessage(EventId = 13504, Level = LogLevel.Error,
         Message = "Token introspection error")]
