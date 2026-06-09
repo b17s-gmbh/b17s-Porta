@@ -34,7 +34,17 @@ public sealed class SessionAuthProvider(
         }
 
         // Refreshes if near expiry. The result is the up-to-date access token.
-        var accessToken = await accessTokenRefresh.GetAccessTokenAsync(context);
+        var refreshResult = await accessTokenRefresh.GetAccessTokenAsync(context);
+        if (refreshResult.SessionTerminated)
+        {
+            // The IdP rejected the refresh token (invalid_grant) and the refresh service signed
+            // the session out. The per-request-cached auth ticket still holds the old access
+            // token, so falling through to the ticket fallback below would resurrect the revoked
+            // session for this request. Fail closed instead.
+            return AuthenticationContext.Unauthenticated();
+        }
+
+        var accessToken = refreshResult.AccessToken;
 
         // Re-read after potential refresh - the ticket may now hold rotated tokens.
         if (accessToken is not null)

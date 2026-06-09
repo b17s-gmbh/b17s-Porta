@@ -65,12 +65,12 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
     }
 
     /// <inheritdoc/>
-    public async Task<string?> GetAccessTokenAsync(HttpContext context)
+    public async Task<AccessTokenResult> GetAccessTokenAsync(HttpContext context)
     {
         var auth = await context.AuthenticateAsync(CookieScheme);
         if (!auth.Succeeded || auth.Principal is null || auth.Properties is null)
         {
-            return null;
+            return AccessTokenResult.None;
         }
 
         var accessToken = auth.Properties.GetTokenValue("access_token");
@@ -79,12 +79,12 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
 
         if (string.IsNullOrEmpty(accessToken))
         {
-            return null;
+            return AccessTokenResult.None;
         }
 
         if (!IsNearExpiry(expiresAt) || string.IsNullOrEmpty(refreshToken))
         {
-            return accessToken;
+            return AccessTokenResult.FromToken(accessToken);
         }
 
         return await TryRefreshAsync(context, auth, refreshToken, fallback: accessToken);
@@ -139,7 +139,11 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
             }
 
             var freshRefreshToken = properties.GetTokenValue("refresh_token") ?? refreshToken;
-            return await PerformRefreshAsync(context, principal, properties, freshRefreshToken, fallback: freshAccessToken ?? accessToken);
+            var result = await PerformRefreshAsync(context, principal, properties, freshRefreshToken, fallback: freshAccessToken ?? accessToken);
+
+            // On invalid_grant the session was just signed out; null tells the caller's
+            // refresh-on-401 retry there is no token worth re-sending.
+            return result.SessionTerminated ? null : result.AccessToken;
         }
         catch (Exception ex) when (!ex.IsCanceledBy(context.RequestAborted))
         {
@@ -148,14 +152,14 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         }
     }
 
-    private async Task<string?> TryRefreshAsync(HttpContext context, AuthenticateResult auth, string refreshToken, string fallback)
+    private async Task<AccessTokenResult> TryRefreshAsync(HttpContext context, AuthenticateResult auth, string refreshToken, string fallback)
     {
         var lockKey = GetUserLockKey(context, auth);
         await using var handle = await _refreshLock.AcquireAsync(lockKey, TimeSpan.FromSeconds(10), context.RequestAborted);
         if (!handle.Acquired)
         {
             _logger.RefreshLockTimeout(lockKey);
-            return fallback;
+            return AccessTokenResult.FromToken(fallback);
         }
 
         try
@@ -167,7 +171,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
             var current = await ReadCurrentTicketAsync(context, auth);
             if (current is null)
             {
-                return fallback;
+                return AccessTokenResult.FromToken(fallback);
             }
 
             var (principal, properties) = current.Value;
@@ -175,7 +179,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
             var freshExpiresAt = ParseExpiresAt(properties.GetTokenValue("expires_at"));
             if (!IsNearExpiry(freshExpiresAt))
             {
-                return freshAccessToken;
+                return AccessTokenResult.FromToken(freshAccessToken);
             }
 
             var freshRefreshToken = properties.GetTokenValue("refresh_token") ?? refreshToken;
@@ -184,7 +188,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         catch (Exception ex) when (!ex.IsCanceledBy(context.RequestAborted))
         {
             _logger.AccessTokenRefreshError(ex);
-            return fallback;
+            return AccessTokenResult.FromToken(fallback);
         }
     }
 
@@ -226,9 +230,10 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
     /// Calls the IdP refresh grant and writes the rotated tokens back onto the cookie ticket.
     /// Caller must already hold the per-user refresh lock and have re-read the current ticket
     /// (<paramref name="principal"/>/<paramref name="properties"/>) under it. Returns the rotated
-    /// access token, or <paramref name="fallback"/> when the IdP declines the refresh.
+    /// access token, <paramref name="fallback"/> when the IdP fails transiently, or
+    /// <see cref="AccessTokenResult.SignedOut"/> when the IdP rejects the refresh token outright.
     /// </summary>
-    private async Task<string?> PerformRefreshAsync(HttpContext context, ClaimsPrincipal principal, AuthenticationProperties properties, string freshRefreshToken, string? fallback)
+    private async Task<AccessTokenResult> PerformRefreshAsync(HttpContext context, ClaimsPrincipal principal, AuthenticationProperties properties, string freshRefreshToken, string? fallback)
     {
         // One span per actual IdP refresh grant. The specific outcome is carried on the span status
         // and the bff.token.refreshes / bff.token.refresh_failures counters (reason tag), not the name.
@@ -253,14 +258,14 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
                 activity?.SetStatus(ActivityStatusCode.Error, "invalid_grant");
                 await _apiTokenService.InvalidateApiTokensAsync(context);
                 await context.SignOutAsync(CookieScheme);
-                return null;
+                return AccessTokenResult.SignedOut();
             }
 
             // Transient failure: keep serving the current token; a later request will retry.
             _logger.RefreshFailedReturningStale();
             _metrics?.RecordTokenRefresh(success: false, reason: "transient");
             activity?.SetStatus(ActivityStatusCode.Error, "transient");
-            return fallback;
+            return AccessTokenResult.FromToken(fallback);
         }
 
         var response = result.Response;
@@ -304,7 +309,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         _logger.AccessTokenRefreshed(response.ExpiresIn);
         _metrics?.RecordTokenRefresh(success: true);
         activity?.SetStatus(ActivityStatusCode.Ok);
-        return response.AccessToken;
+        return AccessTokenResult.FromToken(response.AccessToken);
     }
 
     private bool IsNearExpiry(DateTimeOffset? expiresAt)

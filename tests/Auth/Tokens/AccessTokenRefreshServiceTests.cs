@@ -19,13 +19,14 @@ namespace b17s.Porta.Tests.Auth.Tokens;
 public class AccessTokenRefreshServiceTests
 {
     [Fact]
-    public async Task GetAccessTokenAsync_Unauthenticated_ReturnsNull()
+    public async Task GetAccessTokenAsync_Unauthenticated_ReturnsNoToken()
     {
         using var ctx = new TestContext { Authenticated = false };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Null(token);
+        Assert.Null(result.AccessToken);
+        Assert.False(result.SessionTerminated);
     }
 
     [Fact]
@@ -38,9 +39,9 @@ public class AccessTokenRefreshServiceTests
             ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("fresh-access", token);
+        Assert.Equal("fresh-access", result.AccessToken);
         Assert.Equal(0, ctx.RefreshCalls);
     }
 
@@ -62,9 +63,9 @@ public class AccessTokenRefreshServiceTests
             },
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("new-access", token);
+        Assert.Equal("new-access", result.AccessToken);
         Assert.Equal(1, ctx.RefreshCalls);
         Assert.Equal(1, ctx.SignInCalls);
         Assert.Equal(1, ctx.ApiTokenInvalidationCalls);
@@ -94,9 +95,9 @@ public class AccessTokenRefreshServiceTests
             },
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("new-access", token);
+        Assert.Equal("new-access", result.AccessToken);
         var call = Assert.Single(ctx.Sessions.UpdateRefreshTokenCalls);
         Assert.Equal("sid-42", call.SessionId);
         Assert.Equal("ENC(rotated-rt)", call.EncryptedRefreshToken);
@@ -123,9 +124,9 @@ public class AccessTokenRefreshServiceTests
             },
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("new-access", token);
+        Assert.Equal("new-access", result.AccessToken);
         Assert.Empty(ctx.Sessions.UpdateRefreshTokenCalls);
     }
 
@@ -150,9 +151,9 @@ public class AccessTokenRefreshServiceTests
             },
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("new-access", token);
+        Assert.Equal("new-access", result.AccessToken);
         Assert.Empty(ctx.Sessions.UpdateRefreshTokenCalls);
     }
 
@@ -166,9 +167,9 @@ public class AccessTokenRefreshServiceTests
             ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5),
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("stale-access", token);
+        Assert.Equal("stale-access", result.AccessToken);
         Assert.Equal(0, ctx.RefreshCalls);
     }
 
@@ -183,9 +184,10 @@ public class AccessTokenRefreshServiceTests
             RefreshResult = null,
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("stale-access", token);
+        Assert.Equal("stale-access", result.AccessToken);
+        Assert.False(result.SessionTerminated);
         Assert.Equal(1, ctx.RefreshCalls);
         Assert.Equal(0, ctx.SignInCalls);
     }
@@ -236,11 +238,13 @@ public class AccessTokenRefreshServiceTests
     }
 
     [Fact]
-    public async Task GetAccessTokenAsync_RefreshInvalidGrant_SignsOutAndReturnsNull()
+    public async Task GetAccessTokenAsync_RefreshInvalidGrant_SignsOutAndReportsSessionTerminated()
     {
         // W3: a hard invalid_grant (refresh token revoked/expired/rotated-out at the IdP) must
         // NOT fall back to serving the stale access token - that would let a revoked session keep
-        // working until the access token expires. Fail closed: sign out + drop API tokens + null.
+        // working until the access token expires. Fail closed: sign out + drop API tokens, and
+        // report SessionTerminated so callers (SessionAuthProvider) don't resurrect the ticket's
+        // stale access token either.
         using var ctx = new TestContext
         {
             AccessToken = "stale-access",
@@ -250,9 +254,10 @@ public class AccessTokenRefreshServiceTests
             RefreshFailure = RefreshFailureReason.InvalidGrant,
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Null(token);
+        Assert.True(result.SessionTerminated);
+        Assert.Null(result.AccessToken);
         Assert.Equal(1, ctx.RefreshCalls);
         Assert.Equal(0, ctx.SignInCalls);
         Assert.Equal(1, ctx.SignOutCalls);
@@ -281,9 +286,9 @@ public class AccessTokenRefreshServiceTests
         };
         ctx.HttpContext.RequestAborted = cts.Token;
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("new-access", token);
+        Assert.Equal("new-access", result.AccessToken);
         Assert.Equal(1, ctx.RefreshCalls);
         Assert.Equal(cts.Token, ctx.LastRefreshCancellationToken);
     }
@@ -323,9 +328,9 @@ public class AccessTokenRefreshServiceTests
             RefreshThrows = new InvalidOperationException("boom"),
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("stale-access", token);
+        Assert.Equal("stale-access", result.AccessToken);
     }
 
     [Fact]
@@ -338,9 +343,9 @@ public class AccessTokenRefreshServiceTests
             ExpiresAt = null,
         };
 
-        var token = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
 
-        Assert.Equal("no-expiry", token);
+        Assert.Equal("no-expiry", result.AccessToken);
         Assert.Equal(0, ctx.RefreshCalls);
     }
 

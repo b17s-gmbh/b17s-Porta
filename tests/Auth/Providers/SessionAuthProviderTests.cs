@@ -68,11 +68,45 @@ public sealed class SessionAuthProviderTests
     }
 
     [Fact]
+    public async Task GetAuthContextAsync_RefreshSessionTerminated_ReturnsUnauthenticated()
+    {
+        // invalid_grant fail-closed (report H2): AccessTokenRefreshService signed the dead
+        // session out, but this request's cached auth ticket still carries the old access token.
+        // The provider must NOT resurrect it via the ticket fallback - the request is
+        // unauthenticated, full stop.
+        var refreshSvc = new RecordingRefresh { SessionTerminated = true };
+        var apiTokens = new NoopApiTokenService();
+
+        var identity = new ClaimsIdentity("cookies");
+        identity.AddClaim(new Claim("sub", "user-1"));
+        var principal = new ClaimsPrincipal(identity);
+
+        var properties = new AuthenticationProperties();
+        properties.StoreTokens([
+            new() { Name = "access_token", Value = "dead-session-access" },
+            new() { Name = "refresh_token", Value = "rejected-refresh" },
+        ]);
+        var ticket = new AuthenticationTicket(principal, properties, CookieAuthenticationDefaults.AuthenticationScheme);
+
+        var fakeAuth = new FakeAuthenticationService(AuthenticateResult.Success(ticket));
+        var http = BuildHttpContext(fakeAuth);
+        var sut = new SessionAuthProvider(refreshSvc, new ThrowingTokenRefresh(), apiTokens, NullLogger<SessionAuthProvider>.Instance);
+
+        var result = await sut.GetAuthContextAsync(http, TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsAuthenticated);
+        Assert.Null(result.AccessToken);
+        Assert.Null(result.RefreshToken);
+        Assert.Empty(result.Claims);
+    }
+
+    [Fact]
     public async Task GetAuthContextAsync_RefreshReturnsNull_FallsBackToTicketAccessToken()
     {
-        // When AccessTokenRefreshService returns null (no token to refresh), the provider
-        // must use the ticket's stored access_token as a fallback. Without this branch
-        // unauthenticated-but-cookied requests would have AccessToken=null.
+        // When the refresh service yields no token (e.g. a custom IAccessTokenRefreshService
+        // implementation that doesn't read the ticket), the provider uses the ticket's stored
+        // access_token as a fallback. This only applies while the session is alive - the
+        // terminated-session case above must short-circuit before this fallback.
         var refreshSvc = new RecordingRefresh { Token = null };
         var apiTokens = new NoopApiTokenService();
 
@@ -314,12 +348,13 @@ public sealed class SessionAuthProviderTests
     private sealed class RecordingRefresh : IAccessTokenRefreshService
     {
         public string? Token { get; set; } = "access";
+        public bool SessionTerminated { get; set; }
         public int Calls { get; private set; }
 
-        public Task<string?> GetAccessTokenAsync(HttpContext context)
+        public Task<AccessTokenResult> GetAccessTokenAsync(HttpContext context)
         {
             Calls++;
-            return Task.FromResult(Token);
+            return Task.FromResult(SessionTerminated ? AccessTokenResult.SignedOut() : AccessTokenResult.FromToken(Token));
         }
 
         public Task<string?> ForceRefreshAsync(HttpContext context, string? staleAccessToken = null)
@@ -331,7 +366,7 @@ public sealed class SessionAuthProviderTests
 
     private sealed class ThrowingAccessTokenRefresh : IAccessTokenRefreshService
     {
-        public Task<string?> GetAccessTokenAsync(HttpContext context) => throw new InvalidOperationException("must not be called");
+        public Task<AccessTokenResult> GetAccessTokenAsync(HttpContext context) => throw new InvalidOperationException("must not be called");
         public Task<string?> ForceRefreshAsync(HttpContext context, string? staleAccessToken = null) => throw new InvalidOperationException("must not be called");
     }
 

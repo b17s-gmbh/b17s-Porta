@@ -13,9 +13,13 @@ public interface IAccessTokenRefreshService
 {
     /// <summary>
     /// Returns the current access token for the request, refreshing if near expiry.
-    /// Returns null if the request is unauthenticated or no access token is present.
+    /// The result carries no token (<see cref="AccessTokenResult.None"/>) when the request is
+    /// unauthenticated or no access token is present. When the IdP rejects the refresh token
+    /// (<c>invalid_grant</c>), the session is signed out and the result reports
+    /// <see cref="AccessTokenResult.SessionTerminated"/> — callers must then treat the request
+    /// as unauthenticated rather than fall back to the ticket's stale access token.
     /// </summary>
-    Task<string?> GetAccessTokenAsync(HttpContext context);
+    Task<AccessTokenResult> GetAccessTokenAsync(HttpContext context);
 
     /// <summary>
     /// Forces an access-token refresh regardless of expiry and writes the rotated tokens back
