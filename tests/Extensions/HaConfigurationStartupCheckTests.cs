@@ -330,6 +330,119 @@ public class HaConfigurationStartupCheckTests
     }
 
     [Fact]
+    public async Task Production_DistributedCacheRegisteredAfterPortaAuth_AutoPicksDistributedLock_NoCacheWarning()
+    {
+        // Regression: HA detection used to snapshot the IServiceCollection when
+        // AddPortaAuthentication ran, so a cache registered afterwards produced a
+        // false "no IDistributedCache" warning and the in-process lock was picked.
+        var capture = new CapturingLoggerProvider();
+        var services = new ServiceCollection();
+        services.AddLogging(b => b.AddProvider(capture).SetMinimumLevel(LogLevel.Trace));
+
+        AddPortaAuthWithEnv(services, Environments.Production);
+        services.AddSingleton<IDistributedCache>(new NoopDistributedCache());
+
+        var sp = services.BuildServiceProvider();
+        var hosted = ResolveStartupCheck(sp);
+        await hosted.StartAsync(CancellationToken.None);
+
+        Assert.IsType<DistributedCacheRefreshLock>(sp.GetRequiredService<IRefreshLock>());
+        Assert.DoesNotContain(capture.Entries, e => e.EventId.Id == 14500);
+    }
+
+    [Fact]
+    public async Task Production_NoDistributedCache_LogsCacheWarning()
+    {
+        var capture = new CapturingLoggerProvider();
+        var services = new ServiceCollection();
+        services.AddLogging(b => b.AddProvider(capture).SetMinimumLevel(LogLevel.Trace));
+
+        AddPortaAuthWithEnv(services, Environments.Production);
+
+        var sp = services.BuildServiceProvider();
+        var hosted = ResolveStartupCheck(sp);
+        await hosted.StartAsync(CancellationToken.None);
+
+        Assert.Contains(capture.Entries, e => e.EventId.Id == 14500);
+    }
+
+    [Fact]
+    public async Task Production_CacheAndInProcessLockRegisteredAfterPortaAuth_Throws()
+    {
+        // Regression: with registration-time detection the 14505 fatal could not
+        // fire for post-AddPortaAuthentication registrations, silently leaving the
+        // in-process lock active on what looks like an HA deployment.
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        AddPortaAuthWithEnv(services, Environments.Production);
+        services.AddSingleton<IDistributedCache>(new NoopDistributedCache());
+        services.AddSingleton<IRefreshLock, RefreshLockRegistry>();
+
+        var sp = services.BuildServiceProvider();
+        var hosted = ResolveStartupCheck(sp);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => hosted.StartAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Production_DistributedCache_ConsumerInProcessLockViaFactory_Throws()
+    {
+        // The old detection matched on ImplementationType, so a factory-registered
+        // RefreshLockRegistry slipped past the fatal. Effective-type inspection
+        // catches it regardless of how it was registered.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IDistributedCache>(new NoopDistributedCache());
+        services.AddSingleton<IRefreshLock>(_ => new RefreshLockRegistry());
+
+        AddPortaAuthWithEnv(services, Environments.Production);
+
+        var sp = services.BuildServiceProvider();
+        var hosted = ResolveStartupCheck(sp);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => hosted.StartAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Production_DpPersistenceRegisteredAfterPortaAuth_NoPersistenceWarning()
+    {
+        var capture = new CapturingLoggerProvider();
+        var services = new ServiceCollection();
+        services.AddLogging(b => b.AddProvider(capture).SetMinimumLevel(LogLevel.Trace));
+        services.AddSingleton<IDistributedCache>(new NoopDistributedCache());
+
+        AddPortaAuthWithEnv(services, Environments.Production);
+        services.AddPortaDataProtectionPersistence(
+            persist: dp => dp.PersistKeysToFileSystem(new DirectoryInfo(Path.GetTempPath())),
+            protectKeys: dp => dp.Services.Configure<KeyManagementOptions>(
+                o => o.XmlEncryptor = new FakeXmlEncryptor()));
+
+        var sp = services.BuildServiceProvider();
+        var hosted = ResolveStartupCheck(sp);
+        await hosted.StartAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(capture.Entries, e => e.EventId.Id == 14501);
+    }
+
+    [Fact]
+    public async Task Production_InProcessLockAcknowledgementRegisteredAfterPortaAuth_DoesNotThrow()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<IDistributedCache>(new NoopDistributedCache());
+        services.AddSingleton<IRefreshLock, RefreshLockRegistry>();
+
+        AddPortaAuthWithEnv(services, Environments.Production);
+        services.AcknowledgeInProcessRefreshLock(reason: "single-box, acknowledged after AddPortaAuthentication");
+
+        var sp = services.BuildServiceProvider();
+        var hosted = ResolveStartupCheck(sp);
+
+        await hosted.StartAsync(CancellationToken.None);
+    }
+
+    [Fact]
     public async Task Production_DistributedCache_ConsumerCustomLock_DoesNotThrow()
     {
         // A consumer-provided non-RefreshLockRegistry implementation is trusted.

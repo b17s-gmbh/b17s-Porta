@@ -128,32 +128,10 @@ public static class AuthenticationServiceExtensions
     /// </summary>
     private static void AddInfrastructure(IServiceCollection services)
     {
-        // Detect HA-fatal misconfigurations *before* installing fallbacks so we can
-        // warn at startup. Both signals are evaluated again inside the hosted
-        // startup check (HaConfigurationStartupCheck) which has access to ILogger.
-        var distributedCachePreRegistered = services.Any(d => d.ServiceType == typeof(IDistributedCache));
-        var refreshLockPreRegistered = services.Any(d => d.ServiceType == typeof(IRefreshLock));
-        var inProcessRefreshLockAcknowledged = RefreshLockExtensions.IsInProcessRefreshLockAcknowledged(services);
-        // Inspect the consumer-provided IRefreshLock (if any) and flag known
-        // in-process implementations. Anything else is treated as distributed
-        // (the consumer brought it; trust their intent).
-        var consumerProvidedInProcessLock = refreshLockPreRegistered &&
-            services.Any(d => d.ServiceType == typeof(IRefreshLock) &&
-                              d.ImplementationType == typeof(RefreshLockRegistry));
-        var dataProtectionPreConfigured = DataProtectionExtensions.IsConfigured(services);
-        // Encryption-at-rest of persisted DP keys is enforced via the helper APIs,
-        // which require a protectKeys action. Operators who deliberately want
-        // unencrypted keys (dev, single-box with full-disk encryption) must call
-        // services.AcknowledgeUnencryptedDataProtectionKeys to opt in. We forward
-        // both signals separately so the startup check can additionally verify the
-        // attestation is not hollow (a protectKeys action that registered no
-        // IXmlEncryptor) by resolving the effective KeyManagementOptions at boot.
-        var dataProtectionKeysEncryptionAttested = DataProtectionExtensions.IsKeysEncryptionAttested(services);
-        var dataProtectionKeysEncryptionAcknowledged = DataProtectionExtensions.IsUnencryptedAcknowledged(services);
-
         // Provide an in-memory distributed cache fallback when no real one is registered.
         // AddDistributedMemoryCache uses TryAddSingleton internally, so a previous
-        // registration (e.g. AddStackExchangeRedisCache) wins.
+        // registration (e.g. AddStackExchangeRedisCache) wins - and a later one wins
+        // too, because DI resolves the last IDistributedCache descriptor.
         services.AddDistributedMemoryCache();
 
         // Session, Data Protection and ticket-store options all bind from the composed
@@ -194,41 +172,30 @@ public static class AuthenticationServiceExtensions
                 opts.DefaultSlidingExpiration = TimeSpan.FromMinutes(cfg.Value.SessionTimeoutInMin));
         services.AddSingleton<ITicketStore, DistributedCacheTicketStore>();
 
-        // Refresh-lock auto-pick. A consumer-provided IRefreshLock always wins.
-        // Otherwise: distributed cache present → IDistributedCache-backed lock
-        // (HA-safe by default); no distributed cache → in-process registry
-        // (correct for single-instance dev/test). The startup check enforces
-        // that an HA deployment without a proper distributed lock is either
-        // explicitly acknowledged or refused.
-        if (!refreshLockPreRegistered)
-        {
-            if (distributedCachePreRegistered)
-            {
-                services.AddSingleton<IRefreshLock, DistributedCacheRefreshLock>();
-            }
-            else
-            {
-                services.AddSingleton<IRefreshLock, RefreshLockRegistry>();
-            }
-        }
+        // Refresh-lock auto-pick, deferred to first resolve so it observes the
+        // *effective* IDistributedCache rather than a registration-time snapshot
+        // (consumers may register Redis before or after AddPortaAuthentication).
+        // A consumer-provided IRefreshLock always wins: TryAdd skips this factory
+        // when one is already registered, and a later consumer registration
+        // shadows it because DI resolves the last descriptor. Effective cache is
+        // the in-memory fallback → in-process registry (correct for
+        // single-instance dev/test); anything else → IDistributedCache-backed
+        // lock (HA-safe by default). The startup check enforces that an HA
+        // deployment without a proper distributed lock is either explicitly
+        // acknowledged or refused.
+        services.TryAddSingleton<IRefreshLock>(sp =>
+            sp.GetRequiredService<IDistributedCache>() is MemoryDistributedCache
+                ? ActivatorUtilities.CreateInstance<RefreshLockRegistry>(sp)
+                : ActivatorUtilities.CreateInstance<DistributedCacheRefreshLock>(sp));
 
         // HA-readiness check: emit a single startup warning if the consumer hasn't
         // registered shared distributed cache or shared Data Protection persistence.
         // Both are HA-fatal: without them, running >1 replica behind a load balancer
         // will produce sign-in failures and cookies that don't decrypt cross-instance.
-        services.AddHostedService(sp => new HaConfigurationStartupCheck(
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<HaConfigurationStartupCheck>>(),
-            sp.GetRequiredService<Microsoft.Extensions.Hosting.IHostEnvironment>(),
-            sp,
-            distributedCacheConfigured: distributedCachePreRegistered,
-            dataProtectionPersistenceConfigured: dataProtectionPreConfigured,
-            dataProtectionKeysEncryptionAttested: dataProtectionKeysEncryptionAttested,
-            dataProtectionKeysEncryptionAcknowledged: dataProtectionKeysEncryptionAcknowledged,
-            distributedRefreshLockConfiguredOrAcknowledged:
-                IsDistributedRefreshLockConfiguredOrAcknowledged(
-                    distributedCachePreRegistered,
-                    consumerProvidedInProcessLock,
-                    inProcessRefreshLockAcknowledged)));
+        // All signals are derived from the built container inside StartAsync
+        // (effective IDistributedCache / IRefreshLock / marker registrations), so
+        // consumer registration order relative to AddPortaAuthentication doesn't matter.
+        services.AddHostedService<HaConfigurationStartupCheck>();
 
         // Transport-security downgrade guard: refuse to start (outside Development) when the
         // operator has loosened a secure default - SecurePolicy != Always or
@@ -236,29 +203,6 @@ public static class AuthenticationServiceExtensions
         // over plaintext HTTP. Reads IOptions<SessionAuthenticationConfiguration> (the effective
         // bound options) rather than the snapshot, since the OIDC path binds via Configure<>.
         services.AddHostedService<CookieSecurityStartupCheck>();
-    }
-
-    /// <summary>
-    /// True unless the deployment looks HA (distributed cache present) and the
-    /// consumer explicitly pre-registered the in-process <see cref="RefreshLockRegistry"/>
-    /// without calling <see cref="RefreshLockExtensions.AcknowledgeInProcessRefreshLock"/>.
-    /// The startup check uses this to refuse boot in non-Development when the
-    /// in-process lock would be silently used on a multi-replica deployment.
-    /// </summary>
-    private static bool IsDistributedRefreshLockConfiguredOrAcknowledged(
-        bool distributedCachePreRegistered,
-        bool consumerProvidedInProcessLock,
-        bool inProcessRefreshLockAcknowledged)
-    {
-        if (!distributedCachePreRegistered)
-        {
-            return true;
-        }
-        if (!consumerProvidedInProcessLock)
-        {
-            return true;
-        }
-        return inProcessRefreshLockAcknowledged;
     }
 
     /// <summary>
@@ -528,8 +472,9 @@ public static class AuthenticationServiceExtensions
         services.AddScoped<ITokenExchangeService, TokenExchangeService>();
         services.AddScoped<ITokenRevocationService, TokenRevocationService>();
         services.AddScoped<IApiTokenService, ApiTokenService>();
-        // Refresh-lock registration is performed in AddInfrastructure, where the
-        // pre-fallback IDistributedCache signal is still observable. See there.
+        // Refresh-lock registration is performed in AddInfrastructure; the
+        // auto-pick is a resolve-time factory that observes the effective
+        // IDistributedCache, so consumer registration order doesn't matter.
         services.AddScoped<IAccessTokenRefreshService>(sp => new AccessTokenRefreshService(
             sp.GetRequiredService<ITokenRefreshService>(),
             sp.GetRequiredService<IApiTokenService>(),

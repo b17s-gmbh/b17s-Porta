@@ -183,39 +183,28 @@ public static class DataProtectionExtensions
     }
 
     /// <summary>
-    /// Returns <c>true</c> if one of the <c>AddPortaDataProtection*</c> helpers has
-    /// been called on <paramref name="services"/>. Used by the startup HA check.
+    /// Returns <c>true</c> if one of the <c>AddPortaDataProtection*</c> helpers has been
+    /// called. Resolved from the built container at boot, so the helper may be called
+    /// before or after <c>AddPortaAuthentication</c>. Used by the startup HA check.
     /// </summary>
-    internal static bool IsConfigured(IServiceCollection services) =>
-        HasMarker(services, typeof(PortaDataProtectionPersistenceMarker));
+    internal static bool IsConfigured(IServiceProvider services) =>
+        services.GetService<PortaDataProtectionPersistenceMarker>() is not null;
 
     /// <summary>
     /// Returns <c>true</c> if a <c>protectKeys</c> action was supplied to one of the
-    /// <c>AddPortaDataProtection*</c> helpers. This is the registration-time attestation
+    /// <c>AddPortaDataProtection*</c> helpers. This is the operator's attestation
     /// only; the startup check (<see cref="HaConfigurationStartupCheck"/>) additionally
     /// verifies the action actually registered an <c>IXmlEncryptor</c> once the effective
     /// <c>KeyManagementOptions</c> are bound, catching a hollow (empty-lambda) attestation.
     /// </summary>
-    internal static bool IsKeysEncryptionAttested(IServiceCollection services) =>
-        HasMarker(services, typeof(PortaDataProtectionKeysEncryptionAttestationMarker));
+    internal static bool IsKeysEncryptionAttested(IServiceProvider services) =>
+        services.GetService<PortaDataProtectionKeysEncryptionAttestationMarker>() is not null;
 
     /// <summary>
     /// Returns <c>true</c> if <see cref="AcknowledgeUnencryptedDataProtectionKeys"/> has been
-    /// called on <paramref name="services"/>. Used by the startup security check to allow
-    /// dev / single-box opt-out from key-encryption-at-rest enforcement.
+    /// called. Used by the startup security check to allow dev / single-box opt-out from
+    /// key-encryption-at-rest enforcement.
     /// </summary>
-    internal static bool IsUnencryptedAcknowledged(IServiceCollection services) =>
-        HasMarker(services, typeof(PortaUnencryptedDataProtectionAcknowledgement));
-
-    private static bool HasMarker(IServiceCollection services, Type markerType)
-    {
-        foreach (var descriptor in services)
-        {
-            if (descriptor.ServiceType == markerType)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
+    internal static bool IsUnencryptedAcknowledged(IServiceProvider services) =>
+        services.GetService<PortaUnencryptedDataProtectionAcknowledgement>() is not null;
 }

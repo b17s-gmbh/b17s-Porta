@@ -1,4 +1,7 @@
+using b17s.Porta.Auth.Tokens;
+
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -28,20 +31,26 @@ namespace b17s.Porta.Extensions;
 ///   <see cref="RefreshLockExtensions.AcknowledgeInProcessRefreshLock"/>. Warns instead in
 ///   Development.</item>
 /// </list>
+/// Every signal is derived from the built container at boot - the effective
+/// <see cref="IDistributedCache"/> and <see cref="IRefreshLock"/> implementations and the
+/// resolvable marker registrations - rather than from registration-time snapshots, so the
+/// consumer's registration order relative to <c>AddPortaAuthentication</c> doesn't matter.
 /// Single-instance dev/test deployments are unaffected by the warnings - they are informational.
 /// </summary>
 internal sealed class HaConfigurationStartupCheck(
     ILogger<HaConfigurationStartupCheck> logger,
     IHostEnvironment environment,
-    IServiceProvider services,
-    bool distributedCacheConfigured,
-    bool dataProtectionPersistenceConfigured,
-    bool dataProtectionKeysEncryptionAttested,
-    bool dataProtectionKeysEncryptionAcknowledged,
-    bool distributedRefreshLockConfiguredOrAcknowledged) : IHostedService
+    IServiceProvider services) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        var distributedCacheConfigured = IsRealDistributedCacheConfigured();
+        var dataProtectionPersistenceConfigured = DataProtectionExtensions.IsConfigured(services);
+        var dataProtectionKeysEncryptionAttested = DataProtectionExtensions.IsKeysEncryptionAttested(services);
+        var dataProtectionKeysEncryptionAcknowledged = DataProtectionExtensions.IsUnencryptedAcknowledged(services);
+        var distributedRefreshLockConfiguredOrAcknowledged =
+            IsDistributedRefreshLockConfiguredOrAcknowledged(distributedCacheConfigured);
+
         if (!distributedCacheConfigured)
         {
             logger.DistributedCacheMissing();
@@ -134,6 +143,37 @@ internal sealed class HaConfigurationStartupCheck(
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     /// <summary>
+    /// True when the effective <see cref="IDistributedCache"/> is something other than the
+    /// in-memory fallback installed by <c>AddPortaAuthentication</c>. Resolved from the built
+    /// container (the last registration wins), so a Redis/Valkey cache registered after
+    /// <c>AddPortaAuthentication</c> is still detected.
+    /// </summary>
+    private bool IsRealDistributedCacheConfigured() =>
+        services.GetService<IDistributedCache>() is { } cache && cache is not MemoryDistributedCache;
+
+    /// <summary>
+    /// True unless the deployment looks HA (real distributed cache effective) and the
+    /// effective <see cref="IRefreshLock"/> is the in-process <see cref="RefreshLockRegistry"/>
+    /// without an <see cref="RefreshLockExtensions.AcknowledgeInProcessRefreshLock"/> call.
+    /// When a real cache is present the auto-pick factory yields the distributed lock, so a
+    /// resolved <see cref="RefreshLockRegistry"/> can only mean the consumer registered it
+    /// explicitly - regardless of whether that registration came before or after
+    /// <c>AddPortaAuthentication</c>.
+    /// </summary>
+    private bool IsDistributedRefreshLockConfiguredOrAcknowledged(bool distributedCacheConfigured)
+    {
+        if (!distributedCacheConfigured)
+        {
+            return true;
+        }
+        if (services.GetService<IRefreshLock>() is not RefreshLockRegistry)
+        {
+            return true;
+        }
+        return RefreshLockExtensions.IsInProcessRefreshLockAcknowledged(services);
+    }
+
+    /// <summary>
     /// Best-effort verification that a key encryptor is actually wired. Resolving
     /// <see cref="IOptions{KeyManagementOptions}"/> runs every <c>IConfigureOptions</c>
     /// (including the one a <c>ProtectKeysWith…</c> extension registers), so
@@ -147,9 +187,9 @@ internal sealed class HaConfigurationStartupCheck(
 internal static partial class HaConfigurationStartupCheckLogging
 {
     [LoggerMessage(EventId = 14500, Level = LogLevel.Warning,
-        Message = "Porta: no IDistributedCache registered before AddPortaAuthentication; " +
-                  "falling back to in-memory cache. This is fine for single-instance dev. " +
-                  "For HA (>1 replica) register Redis/Valkey first " +
+        Message = "Porta: no real IDistributedCache is registered; using the in-memory fallback. " +
+                  "This is fine for single-instance dev. " +
+                  "For HA (>1 replica) register Redis/Valkey " +
                   "(services.AddStackExchangeRedisCache(...) or builder.AddRedisDistributedCache(\"cache\")). " +
                   "See docs/ha-deployment.md.")]
     public static partial void DistributedCacheMissing(this ILogger logger);
@@ -159,7 +199,7 @@ internal static partial class HaConfigurationStartupCheckLogging
                   "generate its own key ring at startup, so cookies/tickets minted on one instance " +
                   "will fail to decrypt on another and OIDC sign-in will fail without sticky sessions. " +
                   "Call services.AddPortaDataProtectionWithEntityFrameworkStore(...) or " +
-                  "AddPortaDataProtectionPersistence(dp => dp.PersistKeysTo...) before AddPortaAuthentication. " +
+                  "AddPortaDataProtectionPersistence(dp => dp.PersistKeysTo...). " +
                   "See docs/ha-deployment.md.")]
     public static partial void DataProtectionPersistenceMissing(this ILogger logger);
 

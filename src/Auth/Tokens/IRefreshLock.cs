@@ -4,8 +4,9 @@ namespace b17s.Porta.Auth.Tokens;
 /// Coordinates concurrent access-token refreshes for the same principal so that
 /// only one refresh fires at a time per lock key (one key per user/session).
 ///
-/// The default registration depends on what is wired before
-/// <c>AddPortaAuthentication</c> runs:
+/// The default registration is picked at first resolve from the effective
+/// <see cref="Microsoft.Extensions.Caching.Distributed.IDistributedCache"/>, so it does not
+/// matter whether the cache is registered before or after <c>AddPortaAuthentication</c>:
 /// <list type="bullet">
 ///   <item>If a real <see cref="Microsoft.Extensions.Caching.Distributed.IDistributedCache"/>
 ///   is registered (Redis/Valkey), the auto-pick installs <see cref="DistributedCacheRefreshLock"/>

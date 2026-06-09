@@ -227,7 +227,7 @@ When `BackendAuthPolicies.TokenExchange` is selected without an audience source 
 **What it registers:**
 - ASP.NET Core `AddCookie()` + `AddOpenIdConnect()` - framework owns state/nonce/PKCE/code-exchange/id_token validation.
 - `DistributedCacheTicketStore` as the cookie scheme's `SessionStore` - tokens live server-side, encrypted via `IDataProtector`. Cookie carries only an opaque ticket id.
-- `AddDistributedMemoryCache()` as a fallback (Redis/Valkey wins via `TryAddSingleton` if registered).
+- `AddDistributedMemoryCache()` as a fallback (a registered Redis/Valkey cache wins, whether registered before or after `AddPortaAuthentication`).
 - `AddDataProtection()` with the configured application name and key lifetime.
 - `IAccessTokenRefreshService` - auto-refreshes near-expiry access tokens on each request, with per-user locking.
 - Token services: `ITokenRefreshService`, `ITokenRevocationService`, `ITokenExchangeService`, `IApiTokenService`.

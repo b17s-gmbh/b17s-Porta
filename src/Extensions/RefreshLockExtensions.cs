@@ -50,15 +50,6 @@ public static class RefreshLockExtensions
         return services;
     }
 
-    internal static bool IsInProcessRefreshLockAcknowledged(IServiceCollection services)
-    {
-        foreach (var descriptor in services)
-        {
-            if (descriptor.ServiceType == typeof(PortaInProcessRefreshLockAcknowledgement))
-            {
-                return true;
-            }
-        }
-        return false;
-    }
+    internal static bool IsInProcessRefreshLockAcknowledged(IServiceProvider services) =>
+        services.GetService<PortaInProcessRefreshLockAcknowledgement>() is not null;
 }

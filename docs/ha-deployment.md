@@ -17,7 +17,7 @@ The library is designed to be HA-safe under those constraints, but **you must wi
 
 The auth ticket store, session store, session-metadata index, and admin lookups all live in `IDistributedCache`. Without a real distributed cache, every replica falls back to its own in-memory cache and sessions become per-instance.
 
-Register Redis **before** `AddPortaAuthentication` so it wins the `TryAddSingleton`:
+Register Redis before or after `AddPortaAuthentication` - the order doesn't matter. A real registration always wins over the in-memory fallback, and the refresh-lock auto-pick and HA startup check both inspect the *effective* cache from the built container:
 
 ```csharp
 builder.Services.AddStackExchangeRedisCache(opts =>
@@ -155,9 +155,9 @@ If your load balancer offers cheap session affinity (cookie-based, round-robin w
 
 ### Auto-pick - the default does the right thing
 
-`AddPortaAuthentication` picks an `IRefreshLock` implementation based on what's already registered:
+`AddPortaAuthentication` picks an `IRefreshLock` implementation at first resolve, based on the effective registrations in the built container (registration order relative to `AddPortaAuthentication` doesn't matter):
 
-| Pre-registered before `AddPortaAuthentication` | Auto-picked `IRefreshLock` | When this is right |
+| Effective registration | Auto-picked `IRefreshLock` | When this is right |
 |---|---|---|
 | Real `IDistributedCache` (Redis/Valkey) | `DistributedCacheRefreshLock` | Multi-replica deployment. |
 | No `IDistributedCache` | `RefreshLockRegistry` (in-process) | Single-instance dev/test. |
@@ -182,7 +182,7 @@ The `reason` argument is required so the choice is reviewable in code review. As
 
 ### Replacing the lock with your own implementation
 
-The `IRefreshLock` contract is a single method, `Task<RefreshLockHandle> AcquireAsync(string lockKey, TimeSpan timeout, CancellationToken cancellationToken = default)`. The returned `RefreshLockHandle` is `IAsyncDisposable` (dispose it to release) and exposes an `Acquired` flag so callers can tell a real acquisition from a best-effort timeout. Register your implementation before `AddPortaAuthentication`:
+The `IRefreshLock` contract is a single method, `Task<RefreshLockHandle> AcquireAsync(string lockKey, TimeSpan timeout, CancellationToken cancellationToken = default)`. The returned `RefreshLockHandle` is `IAsyncDisposable` (dispose it to release) and exposes an `Acquired` flag so callers can tell a real acquisition from a best-effort timeout. Register your implementation before or after `AddPortaAuthentication` - a consumer-provided `IRefreshLock` always wins over the auto-pick:
 
 ```csharp
 builder.Services.AddSingleton<IRefreshLock, MyRedLockRefreshLock>();
@@ -195,7 +195,7 @@ builder.Services.AddPortaAuthentication(builder.Configuration);
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Distributed cache - must come before AddPortaAuthentication.
+// 1. Distributed cache (order relative to AddPortaAuthentication doesn't matter).
 builder.Services.AddStackExchangeRedisCache(opts =>
 {
     opts.Configuration = builder.Configuration["Redis:ConnectionString"];
@@ -270,7 +270,7 @@ app.Run();
 
 Startup diagnostics emitted by the library:
 
-- `Porta: no IDistributedCache registered before AddPortaAuthentication` - warning, event id `14500`. Fine for single-instance dev; HA-fatal in production.
+- `Porta: no real IDistributedCache is registered; using the in-memory fallback` - warning, event id `14500`. Fine for single-instance dev; HA-fatal in production.
 - `Porta: Data Protection key persistence is not configured` - warning, event id `14501`. HA-fatal in production.
 - `Porta: Data Protection keys are persisted without encryption at rest` (Development only) - warning, event id `14502`. Acceptable for dev loops; in non-Development it becomes a startup throw instead.
 - `Porta: Data Protection keys are persisted without encryption at rest and no explicit acknowledgement` - critical log + thrown `InvalidOperationException`, event id `14503`. Refuses to start.
