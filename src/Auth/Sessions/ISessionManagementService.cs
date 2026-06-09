@@ -2,7 +2,9 @@ namespace b17s.Porta.Auth.Sessions;
 
 /// <summary>
 /// Provides session management capabilities for administrators.
-/// Works with ASP.NET Core's distributed session infrastructure.
+/// Sessions are keyed by a per-login identifier - the IdP-issued <c>sid</c> claim when present,
+/// otherwise a BFF-generated per-login id - which is shared by the session metadata and the
+/// distributed cookie ticket store.
 /// </summary>
 public interface ISessionManagementService
 {
@@ -13,7 +15,7 @@ public interface ISessionManagementService
     /// "who's logged in by address" admin queries and only when the IdP attests it is
     /// verified.
     /// </summary>
-    /// <param name="sessionId">The ASP.NET Core session ID</param>
+    /// <param name="sessionId">The per-login session identifier shared by the session metadata and the cookie ticket: the IdP-issued <c>sid</c> claim when present, otherwise a BFF-generated per-login id.</param>
     /// <param name="userId">The user's <c>sub</c> claim - the IdP-scoped subject identifier. Required.</param>
     /// <param name="email">The user's verified email address, or null when the IdP did not assert <c>email_verified=true</c>. Used as a secondary index only.</param>
     /// <param name="ipAddress">Optional client IP address</param>
@@ -26,7 +28,7 @@ public interface ISessionManagementService
     /// Call this after a refresh-token rotation so subsequent revocations
     /// target the current token, not the rotated-out one.
     /// </summary>
-    /// <param name="sessionId">The ASP.NET Core session ID</param>
+    /// <param name="sessionId">The per-login session identifier (IdP <c>sid</c> or BFF-generated per-login id) the metadata is keyed by.</param>
     /// <param name="encryptedRefreshToken">The new IDataProtector-protected refresh token, or null to clear.</param>
     Task UpdateRefreshTokenAsync(string sessionId, string? encryptedRefreshToken);
 
@@ -82,6 +84,6 @@ public interface ISessionManagementService
     /// Updates the last activity time for a session.
     /// Call this periodically or on significant user activity to track session usage.
     /// </summary>
-    /// <param name="sessionId">The ASP.NET Core session ID</param>
+    /// <param name="sessionId">The per-login session identifier (IdP <c>sid</c> or BFF-generated per-login id) the metadata is keyed by.</param>
     Task TouchSessionAsync(string sessionId);
 }

@@ -7,10 +7,11 @@ namespace b17s.Porta.Auth.Providers;
 /// Implement this interface to create custom authentication providers.
 /// </summary>
 /// <remarks>
-/// The library provides two built-in implementations:
+/// The library provides three built-in implementations:
 /// <list type="bullet">
 ///   <item><see cref="SessionAuthProvider"/> - Session-based authentication with OIDC tokens</item>
 ///   <item><see cref="ReferenceTokenAuthProvider"/> - Reference token authentication with introspection</item>
+///   <item><see cref="JwtBearerAuthProvider"/> - JWT bearer authentication via ASP.NET Core's JwtBearer handler (opt-in)</item>
 /// </list>
 ///
 /// For custom authentication (API keys, HMAC, custom JWTs, etc.), implement this interface
