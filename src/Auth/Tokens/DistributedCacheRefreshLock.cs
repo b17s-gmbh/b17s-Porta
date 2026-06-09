@@ -1,6 +1,7 @@
 using System.Text;
 
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.Extensions.Logging;
 
 namespace b17s.Porta.Auth.Tokens;
 
@@ -40,8 +41,18 @@ namespace b17s.Porta.Auth.Tokens;
 /// caller's <c>timeout</c> bounds how long this method waits for the lock.
 /// Backoff between probe attempts is jittered to avoid thundering-herd retries.
 /// </para>
+///
+/// <para>
+/// A cache outage (Redis down, timeout) is reported as a not-acquired handle rather
+/// than thrown: per the <see cref="IRefreshLock"/> contract the caller then serves the
+/// stale access token, so losing the coordination store degrades to a possible
+/// double-refresh instead of failing still-valid sessions.
+/// </para>
 /// </summary>
-internal sealed class DistributedCacheRefreshLock(IDistributedCache cache, TimeProvider? timeProvider = null) : IRefreshLock
+internal sealed class DistributedCacheRefreshLock(
+    IDistributedCache cache,
+    TimeProvider? timeProvider = null,
+    ILogger<DistributedCacheRefreshLock>? logger = null) : IRefreshLock
 {
     private const string KeyPrefix = "porta:refresh-lock:";
     private static readonly TimeSpan LockTtl = TimeSpan.FromSeconds(30);
@@ -61,20 +72,30 @@ internal sealed class DistributedCacheRefreshLock(IDistributedCache cache, TimeP
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var existing = await cache.GetAsync(cacheKey, cancellationToken);
-            if (existing is null)
+            try
             {
-                await cache.SetAsync(cacheKey, tokenBytes, new DistributedCacheEntryOptions
+                var existing = await cache.GetAsync(cacheKey, cancellationToken);
+                if (existing is null)
                 {
-                    AbsoluteExpirationRelativeToNow = LockTtl,
-                }, cancellationToken);
+                    await cache.SetAsync(cacheKey, tokenBytes, new DistributedCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = LockTtl,
+                    }, cancellationToken);
 
-                var verify = await cache.GetAsync(cacheKey, cancellationToken);
-                if (verify is not null && BytesEqual(verify, tokenBytes))
-                {
-                    return new RefreshLockHandle(true, () => ReleaseAsync(cacheKey, tokenBytes));
+                    var verify = await cache.GetAsync(cacheKey, cancellationToken);
+                    if (verify is not null && BytesEqual(verify, tokenBytes))
+                    {
+                        return new RefreshLockHandle(true, () => ReleaseAsync(cacheKey, tokenBytes));
+                    }
+                    // Lost the race; another replica's token is in the slot. Fall through to wait.
                 }
-                // Lost the race; another replica's token is in the slot. Fall through to wait.
+            }
+            catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
+            {
+                // Cache outage: report not-acquired so the caller falls back to the stale
+                // token, instead of escalating an infrastructure fault into an auth failure.
+                logger?.RefreshLockCacheUnavailable(ex);
+                return RefreshLockHandle.NotAcquired;
             }
 
             if (_timeProvider.GetUtcNow() >= deadline)
@@ -95,10 +116,19 @@ internal sealed class DistributedCacheRefreshLock(IDistributedCache cache, TimeP
 
     private async ValueTask ReleaseAsync(string cacheKey, byte[] expectedToken)
     {
-        var current = await cache.GetAsync(cacheKey);
-        if (current is not null && BytesEqual(current, expectedToken))
+        try
         {
-            await cache.RemoveAsync(cacheKey);
+            var current = await cache.GetAsync(cacheKey);
+            if (current is not null && BytesEqual(current, expectedToken))
+            {
+                await cache.RemoveAsync(cacheKey);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: an unreleased lock self-evicts when its TTL expires, so a cache
+            // outage during release must not surface through the handle's DisposeAsync.
+            logger?.RefreshLockReleaseFailed(ex);
         }
     }
 
@@ -117,4 +147,15 @@ internal sealed class DistributedCacheRefreshLock(IDistributedCache cache, TimeP
         }
         return true;
     }
+}
+
+internal static partial class DistributedCacheRefreshLockLogging
+{
+    [LoggerMessage(EventId = 14405, Level = LogLevel.Warning,
+        Message = "Refresh-lock cache unavailable; treating lock as not acquired so the stale access token is served")]
+    public static partial void RefreshLockCacheUnavailable(this ILogger logger, Exception ex);
+
+    [LoggerMessage(EventId = 14406, Level = LogLevel.Warning,
+        Message = "Refresh-lock release failed; the lock will self-evict when its TTL expires")]
+    public static partial void RefreshLockReleaseFailed(this ILogger logger, Exception ex);
 }

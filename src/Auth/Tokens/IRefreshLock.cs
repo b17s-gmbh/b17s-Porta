@@ -29,6 +29,11 @@ public interface IRefreshLock
     /// whose <see cref="IAsyncDisposable.DisposeAsync"/> releases the lock. If the lock cannot
     /// be acquired within <paramref name="timeout"/>, the returned handle's <see cref="RefreshLockHandle.Acquired"/>
     /// is false and the caller should fall back to a stale access token.
+    ///
+    /// Implementations must not let infrastructure faults (coordination store down, timed out)
+    /// escape this method or the handle's <see cref="IAsyncDisposable.DisposeAsync"/>: report a
+    /// not-acquired handle instead so callers degrade to the stale token. Only cancellation of
+    /// <paramref name="cancellationToken"/> should propagate as an exception.
     /// </summary>
     Task<RefreshLockHandle> AcquireAsync(string lockKey, TimeSpan timeout, CancellationToken cancellationToken = default);
 }
