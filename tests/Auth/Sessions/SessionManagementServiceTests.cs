@@ -289,6 +289,57 @@ public class SessionManagementServiceTests
         Assert.Equal(0, harness.Net("bff.sessions.active"));
     }
 
+    // Pins the H1 invariant: metadata and the sub/email revocation indexes must not be
+    // able to expire while the cookie ticket is still alive. Their sliding window is
+    // max(SessionTimeoutInMin, Cookie.ExpireTimeSpanMinutes) - at least one full cookie
+    // lifetime, which is the longest a live ticket can go between renewals (the renewal
+    // slides these entries via DistributedCacheTicketStore.RenewAsync).
+    [Theory]
+    [InlineData(30, 480, 480)] // cookie lifetime longer than session timeout -> cookie lifetime wins
+    [InlineData(600, 60, 600)] // session timeout acts as a floor when longer
+    public async Task RegisterSessionAsync_IndexAndMetadataTtl_CoversCookieTicketLifetime(
+        int sessionTimeoutMin, int cookieExpireMin, int expectedTtlMin)
+    {
+        var cache = new SetOptionsRecordingCache(new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())));
+        var config = new SessionAuthenticationConfiguration
+        {
+            SessionTimeoutInMin = sessionTimeoutMin,
+            Cookie = new CookieSecurityConfiguration { ExpireTimeSpanMinutes = cookieExpireMin },
+        };
+        var svc = new SessionManagementService(cache, Options.Create(config), NullLogger<SessionManagementService>.Instance);
+
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "user@example.com");
+
+        var expected = TimeSpan.FromMinutes(expectedTtlMin);
+        Assert.Equal(expected, cache.LastSetOptions["porta:session_meta:sid-1"].SlidingExpiration);
+        Assert.Equal(expected, cache.LastSetOptions["porta:sub_sessions:user-1"].SlidingExpiration);
+        Assert.Equal(expected, cache.LastSetOptions["porta:email_sessions:user@example.com"].SlidingExpiration);
+    }
+
+    private sealed class SetOptionsRecordingCache(IDistributedCache inner) : IDistributedCache
+    {
+        public Dictionary<string, DistributedCacheEntryOptions> LastSetOptions { get; } = [];
+
+        public byte[]? Get(string key) => inner.Get(key);
+        public Task<byte[]?> GetAsync(string key, CancellationToken token = default) => inner.GetAsync(key, token);
+        public void Refresh(string key) => inner.Refresh(key);
+        public Task RefreshAsync(string key, CancellationToken token = default) => inner.RefreshAsync(key, token);
+        public void Remove(string key) => inner.Remove(key);
+        public Task RemoveAsync(string key, CancellationToken token = default) => inner.RemoveAsync(key, token);
+
+        public void Set(string key, byte[] value, DistributedCacheEntryOptions options)
+        {
+            LastSetOptions[key] = options;
+            inner.Set(key, value, options);
+        }
+
+        public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)
+        {
+            LastSetOptions[key] = options;
+            return inner.SetAsync(key, value, options, token);
+        }
+    }
+
     private static (SessionManagementService svc, IDistributedCache cache) CreateService(PortaMetrics? metrics = null)
     {
         var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));

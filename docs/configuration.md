@@ -281,8 +281,8 @@ both right or one expires while the other thinks the session is still alive.
 
 | Setting | What it controls | Clock |
 |---|---|---|
-| `SessionAuthentication.SessionTimeoutInMin` | Server-side: distributed-cache ticket store TTL **and** ASP.NET Core `IdleTimeout` for `Session` middleware. Stops servicing requests for a session past this point. | Server wall-clock from last activity. |
-| `SessionAuthentication.Cookie.ExpireTimeSpanMinutes` | Client-side: lifetime stamped into the cookie's `expires_at` token. The cookie auth handler refuses to authenticate principals whose stamp has passed. | Stamped at sign-in; checked on every request. |
+| `SessionAuthentication.SessionTimeoutInMin` | Server-side: ASP.NET Core `IdleTimeout` for `Session` middleware, and a **floor** for the sliding TTL of the session metadata and sub/email revocation indexes (see below). The cookie *ticket* itself is not bound to this value - it lives until the cookie's stamped expiry. | Server wall-clock from last activity. |
+| `SessionAuthentication.Cookie.ExpireTimeSpanMinutes` | Client-side **and** server-side: lifetime stamped into the cookie's `expires_at` token (the cookie auth handler refuses principals whose stamp has passed), and the absolute expiry of the server-side cookie ticket entry. | Stamped at sign-in, re-stamped on sliding renewal; checked on every request. |
 
 Recommendation: set both to the **same value**. If you want sessions to extend
 on activity, also set `SlidingExpiration = true` (default is `false`); the
@@ -290,11 +290,22 @@ server-side ticket and the cookie stamp both slide.
 
 If you set only one:
 
-- Server-side TTL shorter than cookie lifetime → cookie still valid, but ticket
-  store has evicted the principal → ASP.NET Core treats the request as
-  unauthenticated; the user sees a sudden sign-out partway through.
-- Cookie lifetime shorter than server-side TTL → cookie self-expires while the
-  server-side ticket lives on (wasted Redis space, but no functional impact).
+- `SessionTimeoutInMin` shorter than the cookie lifetime → harmless for
+  revocation (the index TTL is the larger of the two values), but ASP.NET Core
+  `Session` state can idle out mid-session.
+- Cookie lifetime shorter than `SessionTimeoutInMin` → the cookie and its
+  server-side ticket expire on the cookie clock; metadata/index entries linger
+  until their TTL passes and are pruned on the next admin lookup (wasted cache
+  space, no functional impact).
+
+The session metadata and the subject/email revocation indexes - what makes
+back-channel logout by `sub` and admin terminate-by-email find live sessions -
+slide on `max(SessionTimeoutInMin, Cookie.ExpireTimeSpanMinutes)` and are
+re-slid on every cookie ticket write (sign-in and each sliding renewal), so
+they cannot expire while the session is still alive. The one way to break that
+invariant is post-configuring `CookieAuthenticationOptions.ExpireTimeSpan`
+directly past that window; the startup check then logs warning `Porta/14704` -
+raise `SessionTimeoutInMin` to match.
 
 ### Cookie Security
 
@@ -320,7 +331,7 @@ Additional startup failures from other parts of the wiring:
 - `UseOidcLogout(options.PerformGlobalLogout = true)` is called against an OIDC handler configured with `SaveTokens = false` - `id_token_hint` cannot be attached to the end-session request.
 - `UseSessionAdmin` is called without a `RequirePolicy`, or the named policy is not registered.
 - `AddPortaDataProtectionWithEntityFrameworkStore` cannot resolve its connection string.
-- Outside Development, `CookieSecurityStartupCheck` throws when `SessionAuthentication.RequireHttpsMetadata` is `false` (event `Porta/14703`) or `Cookie.SecurePolicy` is not `Always` (event `Porta/14701`). Both warn instead of throwing in Development.
+- Outside Development, `CookieSecurityStartupCheck` throws when `SessionAuthentication.RequireHttpsMetadata` is `false` (event `Porta/14703`) or `Cookie.SecurePolicy` is not `Always` (event `Porta/14701`). Both warn instead of throwing in Development. It also warns (event `Porta/14704`, all environments) when the effective cookie `ExpireTimeSpan` has been post-configured beyond the session revocation-index TTL - see [Session timeouts](#session-timeouts---sessiontimeoutinmin-vs-cookieexpiretimespanminutes).
 - Outside Development, `HaConfigurationStartupCheck` throws when Data Protection key persistence is configured but keys are unencrypted at rest with no acknowledgement (event `Porta/14503`), a `protectKeys` action was supplied that registered no `IXmlEncryptor` (event `Porta/14507`), or an in-process refresh lock was registered explicitly while a distributed cache is present (event `Porta/14505`). All three warn instead of throwing in Development. Acknowledge the unencrypted-keys / in-process-lock cases with `AcknowledgeUnencryptedDataProtectionKeys(...)` / `AcknowledgeInProcessRefreshLock(...)`. See [HA Deployment](ha-deployment.md).
 
 ### Logging

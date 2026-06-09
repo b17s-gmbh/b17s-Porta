@@ -1,5 +1,7 @@
+using b17s.Porta.Auth.Sessions;
 using b17s.Porta.Configuration;
 
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -24,11 +26,19 @@ namespace b17s.Porta.Extensions;
 /// case where an operator deliberately loosens a default. It warns instead of
 /// throwing in Development so local loops against a non-HTTPS IdP keep working,
 /// mirroring <see cref="HaConfigurationStartupCheck"/> and the OIDC startup checks.
+///
+/// Additionally warns (all environments) when the effective cookie
+/// <c>ExpireTimeSpan</c> exceeds the sliding TTL of the session revocation
+/// indexes - possible only when a consumer post-configures
+/// <see cref="CookieAuthenticationOptions"/> directly - because the sub/email
+/// revocation indexes could then expire while a session is still alive
+/// (event <c>14704</c>).
 /// </summary>
 internal sealed class CookieSecurityStartupCheck(
     ILogger<CookieSecurityStartupCheck> logger,
     IHostEnvironment environment,
-    IOptions<SessionAuthenticationConfiguration> options) : IHostedService
+    IOptions<SessionAuthenticationConfiguration> options,
+    IOptionsMonitor<CookieAuthenticationOptions>? cookieOptions = null) : IHostedService
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -78,6 +88,27 @@ internal sealed class CookieSecurityStartupCheck(
             }
         }
 
+        // Revocation-index lifetime cross-check. The session metadata and sub/email
+        // revocation indexes slide on max(SessionTimeoutInMin, Cookie.ExpireTimeSpanMinutes)
+        // and are refreshed on every ticket renewal, so with config-driven wiring they
+        // always outlive the ticket. A consumer who post-configures
+        // CookieAuthenticationOptions.ExpireTimeSpan directly past that window reopens
+        // the gap: the indexes can expire while the cookie is still alive, and
+        // back-channel logout by `sub` / admin terminate-by-email silently miss the
+        // session. Warn-only (all environments): the deployment still authenticates
+        // correctly, but a documented revocation path is degraded.
+        var effectiveCookie = cookieOptions?.Get(CookieAuthenticationDefaults.AuthenticationScheme);
+        if (effectiveCookie is not null)
+        {
+            var indexTtl = SessionManagementService.GetSessionEntryTtl(config);
+            if (effectiveCookie.ExpireTimeSpan > indexTtl)
+            {
+                logger.SessionIndexTtlShorterThanCookieLifetime(
+                    effectiveCookie.ExpireTimeSpan.TotalMinutes,
+                    indexTtl.TotalMinutes);
+            }
+        }
+
         return Task.CompletedTask;
     }
 
@@ -111,4 +142,15 @@ internal static partial class CookieSecurityStartupCheckLogging
                   "Refusing to start - OIDC discovery/metadata would be reachable over plaintext HTTP " +
                   "and tamperable by a man-in-the-middle. Set RequireHttpsMetadata=true.")]
     public static partial void RequireHttpsMetadataDisabledFatal(this ILogger logger);
+
+    [LoggerMessage(EventId = 14704, Level = LogLevel.Warning,
+        Message = "Porta: the effective cookie ExpireTimeSpan ({CookieLifetimeMinutes} min) exceeds the " +
+                  "session revocation-index TTL ({IndexTtlMinutes} min, derived as " +
+                  "max(SessionAuthentication.SessionTimeoutInMin, Cookie.ExpireTimeSpanMinutes)). The " +
+                  "sub/email revocation indexes can expire while a session cookie is still valid, so " +
+                  "back-channel logout by sub and admin terminate-by-email may miss live sessions. " +
+                  "Raise SessionTimeoutInMin to at least {CookieLifetimeMinutes} or configure the cookie " +
+                  "lifetime via SessionAuthentication.Cookie.ExpireTimeSpanMinutes.")]
+    public static partial void SessionIndexTtlShorterThanCookieLifetime(
+        this ILogger logger, double cookieLifetimeMinutes, double indexTtlMinutes);
 }

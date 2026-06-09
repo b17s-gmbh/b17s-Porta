@@ -43,14 +43,14 @@ public sealed class SessionManagementService(
         dataProtectionProvider?.CreateProtector(RevocationProtectorPurpose);
 
     // Our custom index for email lookups
-    private const string EmailIndexPrefix = "porta:email_sessions:";
+    private const string EmailIndexPrefix = SessionCacheKeys.EmailIndexPrefix;
 
     // Subject (OIDC `sub` claim) index. Used by back-channel logout, which receives
     // the IdP-scoped subject identifier (typically a UUID) rather than an email.
-    private const string SubjectIndexPrefix = "porta:sub_sessions:";
+    private const string SubjectIndexPrefix = SessionCacheKeys.SubjectIndexPrefix;
 
     // Session metadata prefix (we store minimal info alongside ASP.NET Core session)
-    private const string SessionMetadataPrefix = "porta:session_meta:";
+    private const string SessionMetadataPrefix = SessionCacheKeys.SessionMetadataPrefix;
 
     // Lock-key prefixes used to serialize read-modify-write of the email/subject indexes.
     // Without this, two concurrent logins for the same subject can both read [], both
@@ -60,10 +60,25 @@ public sealed class SessionManagementService(
     private const string SubjectIndexLockPrefix = "porta:sub_sessions_lock:";
     private static readonly TimeSpan IndexLockTimeout = TimeSpan.FromSeconds(5);
 
-    private DistributedCacheEntryOptions IndexEntryOptions => new()
+    private DistributedCacheEntryOptions SessionEntryOptions => new()
     {
-        SlidingExpiration = TimeSpan.FromMinutes(config.SessionTimeoutInMin)
+        SlidingExpiration = GetSessionEntryTtl(config)
     };
+
+    /// <summary>
+    /// Sliding TTL for the session metadata record and the subject/email revocation
+    /// indexes. Must be at least the cookie ticket lifetime: the entries' sliding
+    /// clocks are reset by <see cref="DistributedCacheTicketStore.RenewAsync"/> on
+    /// every ticket write, and the longest a live ticket can go without a write is
+    /// one full <c>Cookie.ExpireTimeSpanMinutes</c> window (sliding renewal fires at
+    /// half-window at the earliest; with SlidingExpiration=false it never fires).
+    /// A shorter window would let the indexes expire mid-session, silently breaking
+    /// back-channel logout by <c>sub</c> and admin terminate-by-email (H1).
+    /// <c>SessionTimeoutInMin</c> acts as a floor for operators who want the admin
+    /// bookkeeping to outlive the ticket.
+    /// </summary>
+    internal static TimeSpan GetSessionEntryTtl(SessionAuthenticationConfiguration config) =>
+        TimeSpan.FromMinutes(Math.Max(config.SessionTimeoutInMin, config.Cookie.ExpireTimeSpanMinutes));
 
     /// <summary>
     /// Registers a session keyed by the OIDC <c>sub</c> claim. Email is an optional
@@ -90,10 +105,7 @@ public sealed class SessionManagementService(
         };
 
         var metadataKey = $"{SessionMetadataPrefix}{sessionId}";
-        await cache.SetStringAsync(metadataKey, JsonSerializer.Serialize(metadata), new DistributedCacheEntryOptions
-        {
-            SlidingExpiration = TimeSpan.FromMinutes(config.SessionTimeoutInMin)
-        });
+        await cache.SetStringAsync(metadataKey, JsonSerializer.Serialize(metadata), SessionEntryOptions);
 
         // Subject index is the load-bearing path for back-channel logout and admin
         // revocation; surfacing a failure here is preferable to leaving a session
@@ -161,10 +173,7 @@ public sealed class SessionManagementService(
             metadata.EncryptedRefreshToken = encryptedRefreshToken;
             metadata.LastActivity = _timeProvider.GetUtcNow();
 
-            await cache.SetStringAsync(metadataKey, JsonSerializer.Serialize(metadata), new DistributedCacheEntryOptions
-            {
-                SlidingExpiration = TimeSpan.FromMinutes(config.SessionTimeoutInMin)
-            });
+            await cache.SetStringAsync(metadataKey, JsonSerializer.Serialize(metadata), SessionEntryOptions);
         }
         catch (Exception ex)
         {
@@ -360,10 +369,7 @@ public sealed class SessionManagementService(
 
             metadata.LastActivity = _timeProvider.GetUtcNow();
 
-            await cache.SetStringAsync(metadataKey, JsonSerializer.Serialize(metadata), new DistributedCacheEntryOptions
-            {
-                SlidingExpiration = TimeSpan.FromMinutes(config.SessionTimeoutInMin)
-            });
+            await cache.SetStringAsync(metadataKey, JsonSerializer.Serialize(metadata), SessionEntryOptions);
         }
         catch (Exception ex)
         {
@@ -477,7 +483,7 @@ public sealed class SessionManagementService(
             if (!sessionIds.Contains(sessionId))
             {
                 sessionIds.Add(sessionId);
-                await cache.SetStringAsync(indexKey, JsonSerializer.Serialize(sessionIds), IndexEntryOptions);
+                await cache.SetStringAsync(indexKey, JsonSerializer.Serialize(sessionIds), SessionEntryOptions);
             }
         }
         catch (Exception ex)
@@ -508,7 +514,7 @@ public sealed class SessionManagementService(
 
             if (sessionIds.Count > 0)
             {
-                await cache.SetStringAsync(indexKey, JsonSerializer.Serialize(sessionIds), IndexEntryOptions, cancellationToken);
+                await cache.SetStringAsync(indexKey, JsonSerializer.Serialize(sessionIds), SessionEntryOptions, cancellationToken);
             }
             else
             {
@@ -561,7 +567,7 @@ public sealed class SessionManagementService(
             if (!sessionIds.Contains(sessionId))
             {
                 sessionIds.Add(sessionId);
-                await cache.SetStringAsync(indexKey, JsonSerializer.Serialize(sessionIds), IndexEntryOptions);
+                await cache.SetStringAsync(indexKey, JsonSerializer.Serialize(sessionIds), SessionEntryOptions);
             }
         }
         catch (Exception ex)
@@ -592,7 +598,7 @@ public sealed class SessionManagementService(
 
             if (sessionIds.Count > 0)
             {
-                await cache.SetStringAsync(indexKey, JsonSerializer.Serialize(sessionIds), IndexEntryOptions, cancellationToken);
+                await cache.SetStringAsync(indexKey, JsonSerializer.Serialize(sessionIds), SessionEntryOptions, cancellationToken);
             }
             else
             {

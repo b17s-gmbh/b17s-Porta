@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 
 using b17s.Porta.Auth.Sessions;
 
@@ -136,6 +137,107 @@ public class DistributedCacheTicketStoreTests
         var result = await storeB.RetrieveAsync(key);
 
         Assert.Null(result);
+    }
+
+    // The cookie handler's sliding renewal only rewrites the ticket; RenewAsync must
+    // also slide the session metadata and sub/email revocation indexes, otherwise they
+    // expire while the session is alive and sub/email-based revocation terminates
+    // nothing (H1).
+    [Fact]
+    public async Task RenewAsync_SlidesSessionMetadataAndRevocationIndexTtls()
+    {
+        var (store, cache) = CreateRecordingStore();
+        await SeedSessionMetadataAsync(cache, sessionId: "sid-1", userId: "user-1", email: "user@example.com");
+
+        await store.RenewAsync("sid-1", MakeTicket(sub: "user-1"));
+
+        Assert.Contains("porta:session_meta:sid-1", cache.Refreshed);
+        Assert.Contains("porta:sub_sessions:user-1", cache.Refreshed);
+        Assert.Contains("porta:email_sessions:user@example.com", cache.Refreshed);
+    }
+
+    [Fact]
+    public async Task RenewAsync_MetadataWithoutEmail_RefreshesSubjectIndexOnly()
+    {
+        var (store, cache) = CreateRecordingStore();
+        await SeedSessionMetadataAsync(cache, sessionId: "sid-1", userId: "user-1", email: null);
+
+        await store.RenewAsync("sid-1", MakeTicket(sub: "user-1"));
+
+        Assert.Contains("porta:sub_sessions:user-1", cache.Refreshed);
+        Assert.DoesNotContain(cache.Refreshed, k => k.StartsWith("porta:email_sessions:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RenewAsync_NoSessionMetadata_StoresTicketWithoutRefreshing()
+    {
+        var (store, cache) = CreateRecordingStore();
+
+        await store.RenewAsync("sid-unknown", MakeTicket(sub: "user-1"));
+
+        Assert.Empty(cache.Refreshed);
+        Assert.NotNull(await store.RetrieveAsync("sid-unknown"));
+    }
+
+    [Fact]
+    public async Task RenewAsync_RevocationRefreshFailure_StillStoresTicket()
+    {
+        var (store, cache) = CreateRecordingStore();
+        await SeedSessionMetadataAsync(cache, sessionId: "sid-1", userId: "user-1", email: "user@example.com");
+        cache.ThrowOnRefresh = true;
+
+        await store.RenewAsync("sid-1", MakeTicket(sub: "user-1"));
+
+        Assert.NotNull(await store.RetrieveAsync("sid-1"));
+    }
+
+    private static (DistributedCacheTicketStore store, RefreshRecordingCache cache) CreateRecordingStore()
+    {
+        var cache = new RefreshRecordingCache(new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())));
+        var protector = new EphemeralDataProtectionProvider();
+        var options = Options.Create(new TicketStoreOptions());
+        var store = new DistributedCacheTicketStore(cache, protector, options, NullLogger<DistributedCacheTicketStore>.Instance);
+        return (store, cache);
+    }
+
+    private static Task SeedSessionMetadataAsync(IDistributedCache cache, string sessionId, string userId, string? email)
+    {
+        var metadata = new SessionInfo
+        {
+            SessionId = sessionId,
+            UserId = userId,
+            Email = email,
+        };
+        return cache.SetStringAsync("porta:session_meta:" + sessionId, JsonSerializer.Serialize(metadata));
+    }
+
+    private sealed class RefreshRecordingCache(IDistributedCache inner) : IDistributedCache
+    {
+        public List<string> Refreshed { get; } = [];
+        public bool ThrowOnRefresh { get; set; }
+
+        public byte[]? Get(string key) => inner.Get(key);
+        public Task<byte[]?> GetAsync(string key, CancellationToken token = default) => inner.GetAsync(key, token);
+        public void Set(string key, byte[] value, DistributedCacheEntryOptions options) => inner.Set(key, value, options);
+        public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default) => inner.SetAsync(key, value, options, token);
+        public void Remove(string key) => inner.Remove(key);
+        public Task RemoveAsync(string key, CancellationToken token = default) => inner.RemoveAsync(key, token);
+
+        public void Refresh(string key) => RecordRefresh(key);
+        public Task RefreshAsync(string key, CancellationToken token = default)
+        {
+            RecordRefresh(key);
+            return inner.RefreshAsync(key, token);
+        }
+
+        private void RecordRefresh(string key)
+        {
+            if (ThrowOnRefresh)
+            {
+                throw new InvalidOperationException("Simulated cache outage");
+            }
+            Refreshed.Add(key);
+        }
     }
 
     private static (DistributedCacheTicketStore store, IDistributedCache cache) CreateStore()

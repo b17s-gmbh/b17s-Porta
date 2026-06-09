@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -70,7 +71,59 @@ public sealed class DistributedCacheTicketStore(
         }
 
         await cache.SetAsync(BuildKey(key), protectedBytes, cacheOptions);
+        await RefreshRevocationEntriesAsync(key);
         logger.TicketRenewed(LogRedaction.RedactSessionId(key));
+    }
+
+    /// <summary>
+    /// Slides the TTLs of the session metadata record and the subject/email
+    /// revocation indexes alongside every ticket write. The cookie handler's
+    /// sliding renewal only calls <see cref="RenewAsync"/>; nothing else touches
+    /// those entries during normal request activity, so without this an active
+    /// session outlives its revocation bookkeeping - and a back-channel logout
+    /// carrying only <c>sub</c>, or an admin terminate-by-email, silently
+    /// terminates nothing, and IdP-side refresh-token revocation is skipped.
+    /// Their sliding window is at least the ticket lifetime
+    /// (<see cref="SessionManagementService.GetSessionEntryTtl"/>), so refreshing
+    /// here keeps them alive for as long as the ticket itself can live.
+    /// Failures are swallowed: a cache hiccup must not fail sign-in or renewal,
+    /// and the next renewal retries.
+    /// </summary>
+    private async Task RefreshRevocationEntriesAsync(string sessionId)
+    {
+        try
+        {
+            var metadataKey = SessionCacheKeys.SessionMetadata(sessionId);
+            var json = await cache.GetStringAsync(metadataKey);
+            if (string.IsNullOrEmpty(json))
+            {
+                // No metadata registered for this ticket (e.g. session management not in use).
+                return;
+            }
+
+            var metadata = JsonSerializer.Deserialize<SessionInfo>(json);
+            if (metadata is null)
+            {
+                return;
+            }
+
+            await cache.RefreshAsync(metadataKey);
+
+            if (!string.IsNullOrEmpty(metadata.UserId))
+            {
+                await cache.RefreshAsync(SessionCacheKeys.SubjectIndex(metadata.UserId));
+            }
+
+            // Email is stored normalized (lowercase) on the metadata, matching the index key.
+            if (!string.IsNullOrEmpty(metadata.Email))
+            {
+                await cache.RefreshAsync(SessionCacheKeys.EmailIndex(metadata.Email));
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.RevocationEntryRefreshFailed(LogRedaction.RedactSessionId(sessionId), ex);
+        }
     }
 
     /// <inheritdoc/>
@@ -141,4 +194,9 @@ internal static partial class DistributedCacheTicketStoreLogging
     [LoggerMessage(EventId = 14303, Level = LogLevel.Error,
         Message = "Failed to deserialize auth ticket {SessionIdHash} after successful decryption")]
     public static partial void TicketDeserializeFailed(this ILogger logger, string sessionIdHash, Exception ex);
+
+    [LoggerMessage(EventId = 14304, Level = LogLevel.Warning,
+        Message = "Failed to refresh revocation index TTLs for session {SessionIdHash}; if the entries " +
+                  "expire before the next ticket renewal, sub/email-based revocation will miss this session")]
+    public static partial void RevocationEntryRefreshFailed(this ILogger logger, string sessionIdHash, Exception ex);
 }

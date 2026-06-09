@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 
 using b17s.Porta.Extensions;
 
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -24,7 +25,52 @@ public class CookieSecurityStartupCheckTests
 
         await hosted.StartAsync(CancellationToken.None);
 
-        Assert.DoesNotContain(capture.Entries, e => e.EventId.Id is 14700 or 14701 or 14702 or 14703);
+        Assert.DoesNotContain(capture.Entries, e => e.EventId.Id is 14700 or 14701 or 14702 or 14703 or 14704);
+    }
+
+    [Fact]
+    public async Task EffectiveCookieLifetimeExceedingRevocationIndexTtl_LogsWarning()
+    {
+        // Post-configuring CookieAuthenticationOptions directly bypasses the
+        // config-derived revocation-index TTL (max(SessionTimeoutInMin,
+        // Cookie.ExpireTimeSpanMinutes)) - the only remaining way to reopen the
+        // H1 gap where the sub/email indexes expire before the cookie does.
+        var capture = new CapturingLoggerProvider();
+        var services = BuildServices(capture, Environments.Production, overrides: null);
+        services.PostConfigure<CookieAuthenticationOptions>(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            o => o.ExpireTimeSpan = TimeSpan.FromHours(24));
+
+        var sp = services.BuildServiceProvider();
+        var hosted = ResolveStartupCheck(sp);
+
+        await hosted.StartAsync(CancellationToken.None);
+
+        Assert.Contains(capture.Entries, e => e.EventId.Id == 14704 && e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task ConfigDrivenCookieLifetimeLongerThanSessionTimeout_DoesNotWarn()
+    {
+        // Config-driven wiring derives the index TTL as max(SessionTimeoutInMin,
+        // Cookie.ExpireTimeSpanMinutes), so a long cookie lifetime alone cannot
+        // open the revocation gap and must not warn.
+        var capture = new CapturingLoggerProvider();
+        var services = BuildServices(
+            capture,
+            Environments.Production,
+            overrides: new()
+            {
+                ["SessionAuthentication:SessionTimeoutInMin"] = "30",
+                ["SessionAuthentication:Cookie:ExpireTimeSpanMinutes"] = "480",
+            });
+
+        var sp = services.BuildServiceProvider();
+        var hosted = ResolveStartupCheck(sp);
+
+        await hosted.StartAsync(CancellationToken.None);
+
+        Assert.DoesNotContain(capture.Entries, e => e.EventId.Id == 14704);
     }
 
     [Theory]
