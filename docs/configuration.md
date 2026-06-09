@@ -101,7 +101,7 @@ builder.Services.AddPortaCore(builder.Configuration);
 
 **What it registers:**
 - Backend caller infrastructure (HttpClients with resilience)
-- Backend auth handler registry with built-in handlers (`None`, `BearerToken`)
+- Backend auth handler registry with built-in handlers (`None`, `BearerToken`, `BasicAuth`, `TokenExchange`)
 - Trusted host validation for secure token forwarding
 - Transformer routing support
 

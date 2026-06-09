@@ -162,8 +162,8 @@ public class ApiKeyAuthProvider : IAuthenticationProvider
             AccessToken = apiKey,
             Claims =
             {
-                ["api_key_id"] = keyInfo.KeyId,
-                ["tenant_id"] = keyInfo.TenantId
+                ["api_key_id"] = [keyInfo.KeyId],
+                ["tenant_id"] = [keyInfo.TenantId]
             }
         };
     }
@@ -207,7 +207,7 @@ Registered providers are composed at resolution time into a single `IAuthenticat
 - **Resolution order is registration order.** Each request is offered to providers in the order they were registered. The first provider whose `GetAuthContextAsync` returns `IsAuthenticated = true` wins; the rest are not called for that request. Register cheap, header-based providers (JWT, API key) before expensive ones if they're more common on your traffic profile.
 - **Refresh routes to the originating provider.** The winning provider's `Scheme` is stamped onto the returned `AuthenticationContext`. When `RefreshAsync` is later called on that context, the composite routes it back to the same provider. Providers that don't support refresh (JWT, reference tokens, most API keys) return `null` as before.
 - **Logout fans out to every provider.** `InvalidateAsync` is called on all registered providers so that every credential surface is cleared (session sign-out, reference-token cache eviction, etc.). Each provider's invalidation is independent - a failure in one is logged and does not block the others.
-- **Mixed-credential requests are logged at Debug.** If a request carries both an `Authorization` header and a cookie-auth ticket, the composite emits an event-id `13800` Debug log naming the scheme that matched. Useful for diagnosing "why did this request authenticate as X instead of Y" without runtime cost in production.
+- **Mixed-credential requests are logged at Debug.** If a request carries both an `Authorization` header and a cookie-auth ticket, the composite emits an event-id `13610` Debug log naming the scheme that matched. Useful for diagnosing "why did this request authenticate as X instead of Y" without runtime cost in production.
 
 ### AuthenticationContext Properties
 

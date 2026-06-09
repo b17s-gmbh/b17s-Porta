@@ -297,7 +297,7 @@ By default, ASP.NET Core's cookie auth handler stores tokens in the cookie itsel
 
 `AddPortaAuthentication` instead registers a `DistributedCacheTicketStore` as the cookie scheme's `SessionStore`:
 
-- Cookie carries only an opaque `Guid.NewGuid("N")` ticket id (~32 bytes).
+- Cookie carries only an opaque ticket id (~32 bytes): the IdP-issued `sid` claim when present, otherwise a generated `Guid.NewGuid("N")`.
 - The actual `AuthenticationTicket` (with tokens) is serialized via `TicketSerializer.Default`, encrypted via `IDataProtector` with purpose `"Porta.AuthTickets.v1"`, and written to `IDistributedCache` under `porta:auth_ticket:{id}`.
 - Sliding expiration matches `SessionAuthentication:SessionTimeoutInMin`.
 
