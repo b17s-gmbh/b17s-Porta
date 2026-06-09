@@ -1052,6 +1052,7 @@ public sealed class BackendCaller(
             {
                 401 => BackendResult<TResponse>.AuthenticationFailure(mappedMessage),
                 403 => BackendResult<TResponse>.AuthorizationFailure(mappedMessage),
+                >= 400 and < 500 => BackendResult<TResponse>.Failure(mappedStatus, mappedMessage, BackendErrorType.ClientError),
                 >= 500 => BackendResult<TResponse>.Failure(mappedStatus, mappedMessage, BackendErrorType.ServerError),
                 _ => BackendResult<TResponse>.Failure(mappedStatus, mappedMessage)
             };
@@ -1123,6 +1124,7 @@ public sealed class BackendCaller(
             {
                 401 => BackendObjectResult.Failure(mappedStatus, mappedMessage, BackendErrorType.AuthenticationError),
                 403 => BackendObjectResult.Failure(mappedStatus, mappedMessage, BackendErrorType.AuthorizationError),
+                >= 400 and < 500 => BackendObjectResult.Failure(mappedStatus, mappedMessage, BackendErrorType.ClientError),
                 >= 500 => BackendObjectResult.Failure(mappedStatus, mappedMessage, BackendErrorType.ServerError),
                 _ => BackendObjectResult.Failure(mappedStatus, mappedMessage)
             };

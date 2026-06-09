@@ -509,6 +509,49 @@ public sealed class BackendCallerGraphQLAndRawTests
     }
 
     // ===========================================================================
+    // Non-auth 4xx classification parity across typed / object / bodyless paths
+    // ===========================================================================
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Conflict)]
+    public async Task Call_TypedBody_NonAuth4xx_ClassifiedAsClientError(HttpStatusCode backendStatus)
+    {
+        // A non-auth backend 4xx (400/404/409) must be classified as ClientError on the typed
+        // body path, matching the bodyless and GraphQL paths. Previously the default switch arm
+        // dropped these onto BackendErrorType.Unknown, so consumers branching on ErrorType saw a
+        // different category for the same status depending on whether the endpoint expected a body.
+        var handler = new StubHandler(backendStatus, """{"error":"nope"}""", "application/json");
+        var caller = CreateCaller(handler);
+
+        var request = new BackendRequest { Method = "GET", Url = "https://backend.test/x" };
+        var result = await caller.CallAsync<Product>(request, TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal((int)backendStatus, result.StatusCode);
+        Assert.Equal(BackendErrorType.ClientError, result.ErrorType);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Conflict)]
+    public async Task CallObject_NonAuth4xx_ClassifiedAsClientError(HttpStatusCode backendStatus)
+    {
+        // Same parity guard for the generic/object-typed deserialization path.
+        var handler = new StubHandler(backendStatus, """{"error":"nope"}""", "application/json");
+        var caller = CreateCaller(handler);
+
+        var request = new BackendRequest { Method = "GET", Url = "https://backend.test/x" };
+        var result = await caller.CallAsync(request, typeof(Product), TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal((int)backendStatus, result.StatusCode);
+        Assert.Equal(BackendErrorType.ClientError, result.ErrorType);
+    }
+
+    // ===========================================================================
     // Bounded reader on the typed path (the OOM cap, now that the typed send uses
     // ResponseHeadersRead like the raw path)
     // ===========================================================================
