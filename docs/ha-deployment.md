@@ -151,7 +151,7 @@ If your load balancer offers cheap session affinity (cookie-based, round-robin w
 `IRefreshLock` coordinates concurrent token refreshes for the same user. In a multi-replica deployment two replicas can independently decide to refresh the same user's token at the same moment. What happens depends on your IdP:
 
 - **IdPs that allow refresh-token reuse during rotation** (most): both refreshes succeed, the second one wins, the first replica's stale token is discarded on its next request. No user-visible effect.
-- **IdPs that enforce strict one-time-use rotation** (some, e.g. some hardened OAuth 2.1 deployments): the loser gets an `invalid_grant` and the user is logged out. The library serves the stale access token for the current request and logs a warning, but the next refresh attempt will succeed only if the rotated token has been written back to the cookie ticket.
+- **IdPs that enforce strict one-time-use rotation** (some, e.g. some hardened OAuth 2.1 deployments): the loser's rotated-out refresh token is rejected with `invalid_grant`. The library **fails closed** rather than serving the stale access token: it invalidates the derived API tokens, signs the user out, logs a warning, and the current request proceeds unauthenticated. The user must re-authenticate. (Serving the stale token would let a session the IdP has already invalidated keep working, so this is deliberate - see [`AccessTokenRefreshService`](../src/Auth/Tokens/AccessTokenRefreshService.cs).) This is why `IRefreshLock` coordination matters under strict rotation: the goal is to avoid the race producing an `invalid_grant` at all.
 
 ### Auto-pick - the default does the right thing
 
