@@ -310,6 +310,9 @@ public sealed class OidcBackChannelLogoutMiddlewareTests : IDisposable
 
         public Task<OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
             => Task.FromResult<OpenIdConnectConfiguration?>(_config);
+
+        public Task<OpenIdConnectConfiguration?> RefreshConfigurationAsync(string authority, CancellationToken cancellationToken = default)
+            => Task.FromResult<OpenIdConnectConfiguration?>(null);
     }
 
     private sealed class RecordingSessionManagement : ISessionManagementService

@@ -169,5 +169,8 @@ public class ApiTokenServiceTests
     {
         public Task<Microsoft.IdentityModel.Protocols.OpenIdConnect.OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("Discovery should not be called when refresh options are explicit");
+
+        public Task<Microsoft.IdentityModel.Protocols.OpenIdConnect.OpenIdConnectConfiguration?> RefreshConfigurationAsync(string authority, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Discovery should not be called when refresh options are explicit");
     }
 }

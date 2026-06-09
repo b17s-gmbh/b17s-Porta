@@ -181,6 +181,91 @@ public sealed class DiscoveryServiceTests
             () => sut.GetConfigurationAsync("https://idp.test", cts.Token));
     }
 
+    [Fact]
+    public async Task RefreshConfigurationAsync_FetchesFreshMetadata()
+    {
+        // After an IdP signing-key rollover, token validation forces a refresh and must get
+        // freshly fetched metadata (and JWKS) back - not the stale cached snapshot that
+        // ConfigurationManager would otherwise serve for up to ~12h.
+        var handler = new RecordingHandler(_ => DiscoveryDocument(issuer: "https://idp.test"));
+        var sut = Build(handler);
+        const string discoveryUrl = "https://idp.test/.well-known/openid-configuration";
+
+        await sut.GetConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken);
+        var fetchesAfterPrime = handler.RequestUris.Count(u => u == discoveryUrl);
+
+        var refreshed = await sut.RefreshConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(refreshed);
+        Assert.Equal("https://idp.test", refreshed!.Issuer);
+        Assert.True(handler.RequestUris.Count(u => u == discoveryUrl) > fetchesAfterPrime);
+    }
+
+    [Fact]
+    public async Task RefreshConfigurationAsync_UnknownAuthority_ReturnsNull_NoHttpCall()
+    {
+        // No metadata has ever been loaded for the authority - nothing to refresh, and a
+        // forced refresh must not become a way to make the service fetch arbitrary URLs.
+        var handler = new RecordingHandler(_ => DiscoveryDocument());
+        var sut = Build(handler);
+
+        Assert.Null(await sut.RefreshConfigurationAsync("https://never-seen.test", TestContext.Current.CancellationToken));
+        Assert.Null(await sut.RefreshConfigurationAsync(null!, TestContext.Current.CancellationToken));
+        Assert.Null(await sut.RefreshConfigurationAsync("", TestContext.Current.CancellationToken));
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task RefreshConfigurationAsync_ThrottledWithinMinInterval_AllowedAfterItElapses()
+    {
+        // The refresh trigger (unknown kid) is attacker-controllable on the unauthenticated
+        // back-channel logout endpoint, so forced fetches are rate-limited per authority.
+        var handler = new RecordingHandler(_ => DiscoveryDocument(issuer: "https://idp.test"));
+        var time = new FakeTimeProvider(DateTimeOffset.Parse("2026-06-10T12:00:00Z"));
+        var sut = Build(handler, timeProvider: time);
+
+        await sut.GetConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken);
+        var callsAfterPrime = handler.Calls;
+
+        Assert.NotNull(await sut.RefreshConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken));
+        var callsAfterRefresh = handler.Calls;
+
+        // Second forced refresh inside the window: throttled, no HTTP traffic.
+        Assert.Null(await sut.RefreshConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken));
+        Assert.Equal(callsAfterRefresh, handler.Calls);
+
+        // Once the interval elapses, a forced refresh works again. (Callers always load via
+        // GetConfigurationAsync first - validation needs the cached config before it can fail
+        // with key-not-found - which recreates the manager the successful refresh dropped.)
+        time.Advance(DiscoveryService.ForcedRefreshMinInterval);
+        await sut.GetConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken);
+        Assert.NotNull(await sut.RefreshConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken));
+        Assert.True(handler.Calls > callsAfterRefresh);
+        Assert.True(callsAfterRefresh > callsAfterPrime);
+    }
+
+    [Fact]
+    public async Task RefreshConfigurationAsync_FetchFailure_ReturnsNull_KeepsCachedConfiguration()
+    {
+        // A failed forced refresh (IdP metadata endpoint down) must not throw and - critically -
+        // must not evict the cached configuration that every other consumer depends on.
+        var failing = false;
+        var handler = new RecordingHandler(_ => failing
+            ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            : DiscoveryDocument(issuer: "https://idp.test"));
+        var sut = Build(handler);
+
+        await sut.GetConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken);
+        failing = true;
+
+        var refreshed = await sut.RefreshConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken);
+        var cached = await sut.GetConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken);
+
+        Assert.Null(refreshed);
+        Assert.NotNull(cached);
+        Assert.Equal("https://idp.test", cached!.Issuer);
+    }
+
     private static HttpResponseMessage DiscoveryDocument(string issuer = "https://idp.test")
     {
         var json = $$"""
@@ -200,12 +285,15 @@ public sealed class DiscoveryServiceTests
         };
     }
 
-    private static DiscoveryService Build(HttpMessageHandler handler, SessionAuthenticationConfiguration? config = null)
+    private static DiscoveryService Build(
+        HttpMessageHandler handler,
+        SessionAuthenticationConfiguration? config = null,
+        TimeProvider? timeProvider = null)
     {
         var factory = new SingleClientFactory(new HttpClient(handler));
         var monitor = new StaticOptionsMonitor<SessionAuthenticationConfiguration>(
             config ?? new SessionAuthenticationConfiguration { RequireHttpsMetadata = false });
-        return new DiscoveryService(factory, monitor, NullLogger<DiscoveryService>.Instance);
+        return new DiscoveryService(factory, monitor, NullLogger<DiscoveryService>.Instance, timeProvider);
     }
 
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
@@ -232,5 +320,12 @@ public sealed class DiscoveryServiceTests
         public T CurrentValue => value;
         public T Get(string? name) => value;
         public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
+
+    private sealed class FakeTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset _now = now;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now += by;
     }
 }

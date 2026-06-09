@@ -370,5 +370,8 @@ public sealed class TokenRefreshServiceTests
             Calls++;
             return Task.FromResult(config);
         }
+
+        public Task<OpenIdConnectConfiguration?> RefreshConfigurationAsync(string authority, CancellationToken cancellationToken = default)
+            => Task.FromResult<OpenIdConnectConfiguration?>(null);
     }
 }

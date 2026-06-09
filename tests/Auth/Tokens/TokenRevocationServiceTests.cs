@@ -488,5 +488,8 @@ public sealed class TokenRevocationServiceTests
     {
         public Task<OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
             => Task.FromResult(config);
+
+        public Task<OpenIdConnectConfiguration?> RefreshConfigurationAsync(string authority, CancellationToken cancellationToken = default)
+            => Task.FromResult<OpenIdConnectConfiguration?>(null);
     }
 }

@@ -204,5 +204,8 @@ public sealed class ReferenceTokenServiceExtensionsTests
     {
         public Task<OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
             => Task.FromResult<OpenIdConnectConfiguration?>(null);
+
+        public Task<OpenIdConnectConfiguration?> RefreshConfigurationAsync(string authority, CancellationToken cancellationToken = default)
+            => Task.FromResult<OpenIdConnectConfiguration?>(null);
     }
 }

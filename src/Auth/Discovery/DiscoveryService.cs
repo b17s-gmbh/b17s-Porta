@@ -17,9 +17,19 @@ namespace b17s.Porta.Auth.Discovery;
 public sealed class DiscoveryService(
     IHttpClientFactory httpClientFactory,
     IOptionsMonitor<SessionAuthenticationConfiguration> configMonitor,
-    ILogger<DiscoveryService> logger) : IDiscoveryService
+    ILogger<DiscoveryService> logger,
+    TimeProvider? timeProvider = null) : IDiscoveryService
 {
+    /// <summary>
+    /// Minimum time between forced refreshes per authority. The trigger (a token with an unknown
+    /// <c>kid</c>) is attacker-controllable on the unauthenticated back-channel logout endpoint,
+    /// so forced fetches must be rate-limited; a legitimate key rollover only needs one.
+    /// </summary>
+    internal static readonly TimeSpan ForcedRefreshMinInterval = TimeSpan.FromSeconds(30);
+
     private readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _managers = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastForcedRefresh = new();
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     /// <inheritdoc/>
     public async Task<OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
@@ -36,6 +46,52 @@ public sealed class DiscoveryService(
         {
             var config = await manager.GetConfigurationAsync(cancellationToken);
             logger.DiscoveryConfigurationLoaded(authority);
+            return config;
+        }
+        catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
+        {
+            logger.DiscoveryFailed(authority, ex);
+            return null;
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<OpenIdConnectConfiguration?> RefreshConfigurationAsync(string authority, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(authority) || !_managers.ContainsKey(authority))
+        {
+            return null;
+        }
+
+        var now = _timeProvider.GetUtcNow();
+        if (_lastForcedRefresh.TryGetValue(authority, out var last) && now - last < ForcedRefreshMinInterval)
+        {
+            logger.DiscoveryForcedRefreshThrottled(authority);
+            return null;
+        }
+
+        _lastForcedRefresh[authority] = now;
+
+        try
+        {
+            // One-shot fetch awaited inline: ConfigurationManager.RequestRefresh only refreshes
+            // on a background thread, but the caller needs the post-rollover keys *now*, for the
+            // retry within the same request (back-channel logout gets a single delivery attempt).
+            var httpClient = httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName);
+            var config = await OpenIdConnectConfigurationRetriever.GetAsync(
+                BuildMetadataAddress(authority),
+                new HttpDocumentRetriever(httpClient)
+                {
+                    RequireHttps = configMonitor.CurrentValue.RequireHttpsMetadata
+                },
+                cancellationToken);
+
+            // Drop the stale manager so every other consumer also sees post-rollover metadata
+            // on their next call (a fresh manager re-fetches inline) instead of the stale cache.
+            // Only on success - a failed refresh must keep the cached configuration usable.
+            _managers.TryRemove(authority, out _);
+
+            logger.DiscoveryConfigurationRefreshed(authority);
             return config;
         }
         catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
@@ -108,4 +164,16 @@ internal static partial class DiscoveryServiceLogging
         Level = LogLevel.Error,
         Message = "Failed to load discovery configuration for authority: {Authority}")]
     public static partial void DiscoveryFailed(this ILogger logger, string authority, Exception ex);
+
+    [LoggerMessage(
+        EventId = 13304,
+        Level = LogLevel.Information,
+        Message = "Discovery metadata force-refreshed for authority: {Authority}")]
+    public static partial void DiscoveryConfigurationRefreshed(this ILogger logger, string authority);
+
+    [LoggerMessage(
+        EventId = 13305,
+        Level = LogLevel.Debug,
+        Message = "Forced discovery refresh throttled for authority: {Authority}")]
+    public static partial void DiscoveryForcedRefreshThrottled(this ILogger logger, string authority);
 }

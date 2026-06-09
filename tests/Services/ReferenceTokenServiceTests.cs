@@ -364,6 +364,9 @@ public sealed class ReferenceTokenServiceTests
     {
         public Task<OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
             => Task.FromResult(config);
+
+        public Task<OpenIdConnectConfiguration?> RefreshConfigurationAsync(string authority, CancellationToken cancellationToken = default)
+            => Task.FromResult<OpenIdConnectConfiguration?>(null);
     }
 
     private sealed class MutableOptionsMonitor<T>(T initial) : IOptionsMonitor<T> where T : class

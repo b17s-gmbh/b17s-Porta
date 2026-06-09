@@ -2,6 +2,7 @@ using b17s.Porta.Auth.Discovery;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 
 namespace b17s.Porta.Auth.Tokens;
@@ -184,21 +185,23 @@ internal static class JwtValidationHelper
             return JwtValidationResult.Failure(JwtValidationFailureReason.DiscoveryFailed);
         }
 
-        var tvp = new TokenValidationParameters
+        var validationResult = await Handler.ValidateTokenAsync(token, BuildValidationParameters(oidcConfig, parameters));
+        if (!validationResult.IsValid && validationResult.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
-            ValidateIssuer = parameters.ValidateIssuer,
-            ValidIssuer = oidcConfig.Issuer,
-            ValidateAudience = parameters.ValidateAudience,
-            ValidAudience = parameters.Audience,
-            ValidateIssuerSigningKey = parameters.ValidateSignature,
-            IssuerSigningKeys = oidcConfig.SigningKeys,
-            ValidateLifetime = parameters.ValidateLifetime,
-            ClockSkew = parameters.ClockSkew,
-            RequireSignedTokens = parameters.ValidateSignature,
-            ValidAlgorithms = AllowedAsymmetricAlgorithms
-        };
+            // The token's key matched nothing in the cached JWKS - the usual cause is an IdP
+            // signing-key rollover that the cached snapshot (up to ~12h old) predates. Refresh
+            // the metadata and retry once against fresh keys (the JwtBearer handler's
+            // RefreshOnIssuerKeyNotFound equivalent). Matters most for back-channel logout,
+            // which gets a single delivery attempt from most IdPs.
+            logger.SigningKeyNotFoundRefreshingMetadata(parameters.Authority);
 
-        var validationResult = await Handler.ValidateTokenAsync(token, tvp);
+            var refreshedConfig = await discoveryService.RefreshConfigurationAsync(parameters.Authority, cancellationToken);
+            if (refreshedConfig != null)
+            {
+                validationResult = await Handler.ValidateTokenAsync(token, BuildValidationParameters(refreshedConfig, parameters));
+            }
+        }
+
         if (!validationResult.IsValid)
         {
             return MapFailure(validationResult.Exception);
@@ -221,6 +224,22 @@ internal static class JwtValidationHelper
         return JwtValidationResult.Success(parsed);
     }
 
+    private static TokenValidationParameters BuildValidationParameters(
+        OpenIdConnectConfiguration oidcConfig,
+        JwtValidationParameters parameters) => new()
+        {
+            ValidateIssuer = parameters.ValidateIssuer,
+            ValidIssuer = oidcConfig.Issuer,
+            ValidateAudience = parameters.ValidateAudience,
+            ValidAudience = parameters.Audience,
+            ValidateIssuerSigningKey = parameters.ValidateSignature,
+            IssuerSigningKeys = oidcConfig.SigningKeys,
+            ValidateLifetime = parameters.ValidateLifetime,
+            ClockSkew = parameters.ClockSkew,
+            RequireSignedTokens = parameters.ValidateSignature,
+            ValidAlgorithms = AllowedAsymmetricAlgorithms
+        };
+
     private static JwtValidationResult MapFailure(Exception? exception) => exception switch
     {
         SecurityTokenInvalidSignatureException ex => JwtValidationResult.Failure(JwtValidationFailureReason.SignatureInvalid, ex.Message),
@@ -232,4 +251,16 @@ internal static class JwtValidationHelper
         not null => JwtValidationResult.Failure(JwtValidationFailureReason.Other, exception.Message),
         _ => JwtValidationResult.Failure(JwtValidationFailureReason.Other, "Unknown validation failure")
     };
+}
+
+/// <summary>
+/// High-performance logging for JwtValidationHelper.
+/// </summary>
+internal static partial class JwtValidationHelperLogging
+{
+    [LoggerMessage(
+        EventId = 13310,
+        Level = LogLevel.Information,
+        Message = "Token signing key not found in cached JWKS for authority: {Authority} - requesting metadata refresh and retrying once")]
+    public static partial void SigningKeyNotFoundRefreshingMetadata(this ILogger logger, string authority);
 }

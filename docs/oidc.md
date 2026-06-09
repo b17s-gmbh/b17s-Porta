@@ -269,7 +269,7 @@ app.UseOidcBackChannelLogout("/auth/backchannel-logout", options =>
 Flow:
 1. User logs out from another app connected to the same IdP.
 2. IdP POSTs a signed `logout_token` JWT to this endpoint.
-3. Middleware validates the JWT signature against the IdP's JWKS (via the shared `JwtValidationHelper`).
+3. Middleware validates the JWT signature against the IdP's JWKS (via the shared `JwtValidationHelper`). If the token's signing key is missing from the cached JWKS — typically after an IdP signing-key rollover — the metadata is re-fetched and validation retried once, so IdP-initiated logouts keep working across key rotations. Forced re-fetches are throttled to one per authority per 30 seconds, since this endpoint is anonymous and the trigger (an unknown `kid`) is attacker-controllable.
 4. Validates the `events` claim contains the back-channel logout event type.
 5. Extracts `sid` (session ID) or `sub` and calls `ISessionManagementService.TerminateSessionAsync(...)`.
 
