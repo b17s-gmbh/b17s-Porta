@@ -36,6 +36,29 @@ public sealed class TransformerEndpointBuilderFromAnyTests
     }
 
     [Fact]
+    public async Task FromAny_DeleteWithJsonBody_DeserializesIntoTypedRequest()
+    {
+        // Regression: the body-deserialization gate was a POST/PUT/PATCH verb allow-list, so
+        // body-bearing DELETE (and OPTIONS) typed transformers received default(TRequest) instead
+        // of the client payload - breaking bulk-delete / method-override APIs and diverging from
+        // raw-forward. The gate now reads any request that carries a JSON body.
+        var transformer = new RecordingTransformer();
+        using var bff = await CreateBffAsync(transformer);
+        var client = bff.GetTestServer().CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Delete, "/proxy/widgets/42")
+        {
+            Content = JsonContent.Create(new EchoRequest { Name = "ada", Count = 7 }),
+        };
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        Assert.NotNull(transformer.LastRequest);
+        Assert.Equal("ada", transformer.LastRequest!.Name);
+        Assert.Equal(7, transformer.LastRequest.Count);
+    }
+
+    [Fact]
     public async Task FromAny_GetRequest_DoesNotAttemptDeserialization()
     {
         // GETs have no JSON body; the gate must skip deserialization. ReadFromJsonAsync

@@ -637,8 +637,12 @@ public sealed class TransformerEndpointBuilder<TTransformer, TRequest, TResponse
     protected override async Task<object?> InvokeTransformerAsync(HttpContext httpContext, TransformerContext transformerContext)
     {
         TRequest? requestBody = default;
-        var method = httpContext.Request.Method;
-        if (HttpMethods.IsPost(method) || HttpMethods.IsPut(method) || HttpMethods.IsPatch(method))
+        // Gate on the presence of a JSON body, not the HTTP verb. Body-bearing DELETE and OPTIONS
+        // requests (and FromAny mappings that forward arbitrary methods) carry client payloads just
+        // like POST/PUT/PATCH; a verb allow-list dropped them, handing the transformer default(TRequest)
+        // and diverging from raw-forward, which forwards any present body. HasJsonContentType() is false
+        // for body-less GET/HEAD (no Content-Type), so those still skip deserialization.
+        if (httpContext.Request.HasJsonContentType())
         {
             try
             {
