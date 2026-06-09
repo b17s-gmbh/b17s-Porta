@@ -29,6 +29,7 @@ public sealed class ReferenceTokenService(
 
     private readonly PortaCoreOptions _coreOptions = coreOptions.Value;
 
+    /// <inheritdoc/>
     public async Task<ReferenceTokenIntrospectionResult?> IntrospectTokenAsync(string token, CancellationToken cancellationToken = default)
     {
         // Read CurrentValue per call so appsettings.json reloads (rotating ClientSecret,

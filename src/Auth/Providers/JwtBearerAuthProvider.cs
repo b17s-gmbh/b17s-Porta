@@ -18,6 +18,7 @@ namespace b17s.Porta.Auth.Providers;
 /// </remarks>
 public sealed class JwtBearerAuthProvider(ILogger<JwtBearerAuthProvider> logger) : IAuthenticationProvider
 {
+    /// <inheritdoc/>
     public async Task<AuthenticationContext> GetAuthContextAsync(HttpContext context, CancellationToken cancellationToken = default)
     {
         // 1. Ask ASP.NET Core's built-in JwtBearer handler to authenticate the request.

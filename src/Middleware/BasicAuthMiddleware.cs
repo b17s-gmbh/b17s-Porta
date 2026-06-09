@@ -18,6 +18,16 @@ public sealed class BasicAuthMiddleware(RequestDelegate next, ILogger<BasicAuthM
     private const string AuthorizationHeaderName = "Authorization";
     private const string BasicScheme = "Basic";
 
+    /// <summary>
+    /// Processes the request, enforcing Basic authentication on endpoints marked with
+    /// <see cref="RequireBasicAuthAttribute"/> and passing all other requests through unchanged.
+    /// Credentials are compared in fixed time against <c>BasicAuth:Username</c> and
+    /// <c>BasicAuth:Password</c> from configuration; on failure the client is challenged with a
+    /// <c>401</c> and a <c>WWW-Authenticate: Basic</c> header.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="configuration">Application configuration supplying the expected credentials.</param>
+    /// <returns>A task that completes when the request has been handled or passed to the next middleware.</returns>
     public async Task InvokeAsync(HttpContext context, IConfiguration configuration)
     {
         // Check if this endpoint requires basic auth
@@ -180,6 +190,12 @@ internal static partial class BasicAuthMiddlewareLogging
 /// </summary>
 public static class BasicAuthMiddlewareExtensions
 {
+    /// <summary>
+    /// Adds the <see cref="BasicAuthMiddleware"/> to the request pipeline, enforcing Basic
+    /// authentication on endpoints marked with <see cref="RequireBasicAuthAttribute"/>.
+    /// </summary>
+    /// <param name="app">The application builder.</param>
+    /// <returns>The same <see cref="IApplicationBuilder"/> instance, for chaining.</returns>
     public static IApplicationBuilder UseBasicAuth(this IApplicationBuilder app)
         => app.UseMiddleware<BasicAuthMiddleware>();
 }

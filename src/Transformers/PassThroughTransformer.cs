@@ -31,6 +31,7 @@ public abstract class PassThroughTransformer<TResponse> : TransformerBase<TRespo
     /// </summary>
     protected virtual TResponse TransformResponse(TResponse response, TransformerContext context) => response;
 
+    /// <inheritdoc/>
     public override async Task<TResponse> TransformAsync(TransformerContext context)
     {
         InitializeLogger(context);
@@ -90,6 +91,7 @@ public abstract class AuthenticatedTransformer<TBackendRequest, TResponse> : Tra
     /// </summary>
     protected virtual TResponse TransformResponse(TResponse response, TransformerContext context) => response;
 
+    /// <inheritdoc/>
     public override async Task<TResponse> TransformAsync(TransformerContext context)
     {
         InitializeLogger(context);
@@ -122,5 +124,6 @@ public abstract class AuthenticatedTransformer<TBackendRequest, TResponse> : Tra
 /// <typeparam name="TResponse">The response type from backend</typeparam>
 public abstract class AuthenticatedTransformer<TResponse> : PassThroughTransformer<TResponse>
 {
+    /// <inheritdoc/>
     protected sealed override bool RequiresAuthentication => true;
 }

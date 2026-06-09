@@ -15,7 +15,7 @@ namespace b17s.Porta.Extensions;
 /// is not registered - i.e. <c>AddPortaAuthentication()</c> / <c>AddPortaOidcAuth()</c> was not called.
 /// <para>
 /// Without this check the misconfiguration only surfaces when the first request hits a token-exchange
-/// route, where it is mapped to <see cref="BackendErrorType.ConfigurationError"/> at request time.
+/// route, where it is mapped to <see cref="b17s.Porta.Transformers.BackendErrorType.ConfigurationError"/> at request time.
 /// Catching it at startup turns a confusing per-request failure into a clear boot error.
 /// </para>
 /// <para>

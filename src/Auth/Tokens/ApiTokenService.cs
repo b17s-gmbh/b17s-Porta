@@ -206,6 +206,9 @@ public sealed class ApiTokenService(
         }
     }
 
+    /// <summary>
+    /// Disposes the internal semaphore that serializes access to the per-request API-token cache.
+    /// </summary>
     public void Dispose() => _cacheGate.Dispose();
 
     private static TokenRefreshOptions? BuildRefreshOptions(ApiConfiguration apiConfig)

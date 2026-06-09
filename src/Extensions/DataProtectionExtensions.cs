@@ -18,7 +18,7 @@ namespace b17s.Porta.Extensions;
 ///
 /// The library does not pick a backend automatically because it doesn't know
 /// which database or cache the consuming app uses. Call one of these helpers
-/// before <see cref="AuthenticationServiceExtensions.AddPortaAuthentication"/>
+/// before <see cref="AuthenticationServiceExtensions.AddPortaAuthentication(IServiceCollection, Microsoft.Extensions.Configuration.IConfiguration, string)"/>
 /// to mark persistence as configured (suppressing the HA warning) and wire
 /// the chosen backend.
 ///
@@ -29,7 +29,7 @@ namespace b17s.Porta.Extensions;
 /// wires the key encryptor (certificate, Key Vault, KMS, DPAPI). For local
 /// development on a single machine, opt out of encryption explicitly with
 /// <see cref="AcknowledgeUnencryptedDataProtectionKeys"/> - otherwise
-/// <see cref="AuthenticationServiceExtensions.AddPortaAuthentication"/> refuses
+/// <see cref="AuthenticationServiceExtensions.AddPortaAuthentication(IServiceCollection, Microsoft.Extensions.Configuration.IConfiguration, string)"/> refuses
 /// to start in non-Development environments.
 ///
 /// See docs/ha-deployment.md for the full picture.

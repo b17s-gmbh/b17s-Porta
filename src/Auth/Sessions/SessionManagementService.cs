@@ -137,6 +137,7 @@ public sealed class SessionManagementService(
         metrics?.RecordSessionCreated();
     }
 
+    /// <inheritdoc/>
     public async Task UpdateRefreshTokenAsync(string sessionId, string? encryptedRefreshToken)
     {
         if (string.IsNullOrEmpty(sessionId))
@@ -171,6 +172,7 @@ public sealed class SessionManagementService(
         }
     }
 
+    /// <inheritdoc/>
     public async Task<IReadOnlyList<SessionInfo>> GetSessionsByEmailAsync(string email, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(email))
@@ -227,6 +229,7 @@ public sealed class SessionManagementService(
         }
     }
 
+    /// <inheritdoc/>
     public async Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
     {
         if (string.IsNullOrEmpty(sessionId))
@@ -267,6 +270,7 @@ public sealed class SessionManagementService(
         }
     }
 
+    /// <inheritdoc/>
     public async Task<int> TerminateSessionsByEmailAsync(string email, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
     {
         if (string.IsNullOrEmpty(email))
@@ -300,6 +304,7 @@ public sealed class SessionManagementService(
         }
     }
 
+    /// <inheritdoc/>
     public async Task<int> TerminateSessionsBySubjectAsync(string subject, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified")
     {
         if (string.IsNullOrEmpty(subject))
@@ -618,6 +623,7 @@ public sealed class SessionManagementService(
         return indexLock.AcquireAsync(lockKey, IndexLockTimeout);
     }
 
+    /// <inheritdoc/>
     public string? ProtectRefreshToken(string? refreshToken)
     {
         if (string.IsNullOrEmpty(refreshToken) || _revocationProtector is null)

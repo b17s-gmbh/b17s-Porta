@@ -34,6 +34,7 @@ public sealed class DistributedCacheTicketStore(
     private readonly TicketStoreOptions _options = options.Value;
     private readonly IDataProtector _protector = dataProtectionProvider.CreateProtector(options.Value.DataProtectorPurpose);
 
+    /// <inheritdoc/>
     public async Task<string> StoreAsync(AuthenticationTicket ticket)
     {
         ArgumentNullException.ThrowIfNull(ticket);
@@ -48,6 +49,7 @@ public sealed class DistributedCacheTicketStore(
             ? id
             : Guid.NewGuid().ToString("N");
 
+    /// <inheritdoc/>
     public async Task RenewAsync(string key, AuthenticationTicket ticket)
     {
         ArgumentException.ThrowIfNullOrEmpty(key);
@@ -71,6 +73,7 @@ public sealed class DistributedCacheTicketStore(
         logger.TicketRenewed(LogRedaction.RedactSessionId(key));
     }
 
+    /// <inheritdoc/>
     public async Task<AuthenticationTicket?> RetrieveAsync(string key)
     {
         if (string.IsNullOrEmpty(key))
@@ -106,6 +109,7 @@ public sealed class DistributedCacheTicketStore(
         }
     }
 
+    /// <inheritdoc/>
     public async Task RemoveAsync(string key)
     {
         if (string.IsNullOrEmpty(key))

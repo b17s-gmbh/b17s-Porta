@@ -4,7 +4,7 @@ namespace b17s.Porta.Extensions;
 
 /// <summary>
 /// Extension methods for opting out of the secure-by-default <see cref="b17s.Porta.Auth.Tokens.IRefreshLock"/>
-/// behaviour. By default <see cref="AuthenticationServiceExtensions.AddPortaAuthentication"/>
+/// behaviour. By default <see cref="AuthenticationServiceExtensions.AddPortaAuthentication(IServiceCollection, Microsoft.Extensions.Configuration.IConfiguration, string)"/>
 /// auto-registers the <see cref="Microsoft.Extensions.Caching.Distributed.IDistributedCache"/>-backed
 /// lock when a real distributed cache is present, and refuses to start in non-Development
 /// when a multi-replica deployment would silently use the in-process fallback.
@@ -27,7 +27,7 @@ public static class RefreshLockExtensions
     /// <summary>
     /// Acknowledges that the in-process <see cref="b17s.Porta.Auth.Tokens.IRefreshLock"/>
     /// is intentional even though a distributed cache is registered. By default
-    /// <see cref="AuthenticationServiceExtensions.AddPortaAuthentication"/> refuses to
+    /// <see cref="AuthenticationServiceExtensions.AddPortaAuthentication(IServiceCollection, Microsoft.Extensions.Configuration.IConfiguration, string)"/> refuses to
     /// start in non-Development environments under that combination, on the assumption
     /// that a distributed cache implies a multi-replica deployment where cross-replica
     /// refresh races against a strict-rotation IdP would produce spurious sign-outs.

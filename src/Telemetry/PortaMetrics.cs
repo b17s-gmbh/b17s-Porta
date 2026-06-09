@@ -46,6 +46,15 @@ public sealed class PortaMetrics
     private readonly UpDownCounter<long> _activeSessions;
     private readonly UpDownCounter<long> _activeRequests;
 
+    /// <summary>
+    /// Initializes a new <see cref="PortaMetrics"/> instance, creating the underlying
+    /// <see cref="Meter"/> and all BFF counters, histograms, and up-down counters.
+    /// </summary>
+    /// <param name="meterFactory">
+    /// The meter factory used to create the BFF <see cref="Meter"/> (named after
+    /// <see cref="PortaActivitySource.ActivitySourceName"/> and versioned with
+    /// <see cref="PortaActivitySource.Version"/>).
+    /// </param>
     public PortaMetrics(IMeterFactory meterFactory)
     {
         _meter = meterFactory.Create(PortaActivitySource.ActivitySourceName, PortaActivitySource.Version);
@@ -153,6 +162,12 @@ public sealed class PortaMetrics
     }
 
     // Authentication metrics
+
+    /// <summary>
+    /// Increments the <c>bff.auth.failures</c> counter to record a failed authentication attempt.
+    /// </summary>
+    /// <param name="reason">The reason the authentication failed, recorded as the <c>reason</c> tag.</param>
+    /// <param name="provider">The authentication provider, recorded as the <c>provider</c> tag when supplied.</param>
     public void RecordAuthenticationFailure(string reason, string? provider = null)
     {
         var tags = new TagList
@@ -165,6 +180,10 @@ public sealed class PortaMetrics
         _authenticationFailures.Add(1, tags);
     }
 
+    /// <summary>
+    /// Increments the <c>bff.auth.successes</c> counter to record a successful authentication.
+    /// </summary>
+    /// <param name="provider">The authentication provider, recorded as the <c>provider</c> tag when supplied.</param>
     public void RecordAuthenticationSuccess(string? provider = null)
     {
         var tags = new TagList();
@@ -175,6 +194,13 @@ public sealed class PortaMetrics
     }
 
     // Token metrics
+
+    /// <summary>
+    /// Records a token refresh outcome, incrementing <c>bff.token.refreshes</c> on success
+    /// or <c>bff.token.refresh_failures</c> on failure.
+    /// </summary>
+    /// <param name="success"><see langword="true"/> if the refresh succeeded; otherwise <see langword="false"/>.</param>
+    /// <param name="reason">An optional reason, recorded as the <c>reason</c> tag when supplied.</param>
     public void RecordTokenRefresh(bool success, string? reason = null)
     {
         var tags = new TagList();
@@ -188,6 +214,14 @@ public sealed class PortaMetrics
     }
 
     // Backend metrics
+
+    /// <summary>
+    /// Increments the <c>bff.backend.requests</c> counter for a backend request, and additionally
+    /// increments <c>bff.backend.errors</c> when the status code indicates an error (>= 400).
+    /// </summary>
+    /// <param name="service">The backend service name, recorded as the <c>service</c> tag.</param>
+    /// <param name="protocol">The protocol used to reach the backend, recorded as the <c>protocol</c> tag.</param>
+    /// <param name="statusCode">The response status code, recorded as the <c>status_code</c> tag.</param>
     public void RecordBackendRequest(string service, string protocol, int statusCode)
     {
         var tags = new TagList
@@ -205,6 +239,12 @@ public sealed class PortaMetrics
         }
     }
 
+    /// <summary>
+    /// Records the duration of a backend call on the <c>bff.backend.duration</c> histogram.
+    /// </summary>
+    /// <param name="durationMs">The backend call duration in milliseconds.</param>
+    /// <param name="service">The backend service name, recorded as the <c>service</c> tag.</param>
+    /// <param name="protocol">The protocol used to reach the backend, recorded as the <c>protocol</c> tag.</param>
     public void RecordBackendCallDuration(double durationMs, string service, string protocol)
     {
         var tags = new TagList
@@ -217,6 +257,11 @@ public sealed class PortaMetrics
     }
 
     // CSRF metrics
+
+    /// <summary>
+    /// Increments the <c>bff.csrf.validation_failures</c> counter to record a CSRF validation failure.
+    /// </summary>
+    /// <param name="reason">The reason validation failed, recorded as the <c>reason</c> tag.</param>
     public void RecordCsrfValidationFailure(string reason)
     {
         var tags = new TagList
@@ -228,12 +273,22 @@ public sealed class PortaMetrics
     }
 
     // Session metrics
+
+    /// <summary>
+    /// Records creation of a session: increments the <c>bff.session.created</c> counter and the
+    /// <c>bff.sessions.active</c> up-down counter.
+    /// </summary>
     public void RecordSessionCreated()
     {
         _sessionCreated.Add(1);
         _activeSessions.Add(1);
     }
 
+    /// <summary>
+    /// Records invalidation of a session: increments the <c>bff.session.invalidated</c> counter
+    /// (tagged with the reason) and decrements the untagged <c>bff.sessions.active</c> up-down counter.
+    /// </summary>
+    /// <param name="reason">The reason the session was invalidated, recorded as the <c>reason</c> tag on the counter.</param>
     public void RecordSessionInvalidated(string reason)
     {
         var tags = new TagList
@@ -276,6 +331,11 @@ public sealed class PortaMetrics
         _requestDuration.Record(durationMs, tags);
     }
 
+    /// <summary>
+    /// Records transformation processing duration on the <c>bff.transformation.duration</c> histogram.
+    /// </summary>
+    /// <param name="durationMs">The transformation processing duration in milliseconds.</param>
+    /// <param name="strategy">The transformation strategy, recorded as the <c>strategy</c> tag.</param>
     public void RecordTransformationDuration(double durationMs, string strategy)
     {
         var tags = new TagList
@@ -286,6 +346,11 @@ public sealed class PortaMetrics
         _transformationDuration.Record(durationMs, tags);
     }
 
+    /// <summary>
+    /// Records authentication processing duration on the <c>bff.auth.duration</c> histogram.
+    /// </summary>
+    /// <param name="durationMs">The authentication processing duration in milliseconds.</param>
+    /// <param name="provider">The authentication provider, recorded as the <c>provider</c> tag.</param>
     public void RecordAuthenticationDuration(double durationMs, string provider)
     {
         var tags = new TagList
@@ -296,6 +361,11 @@ public sealed class PortaMetrics
         _authenticationDuration.Record(durationMs, tags);
     }
 
+    /// <summary>
+    /// Records the request body size on the <c>bff.request.size</c> histogram.
+    /// </summary>
+    /// <param name="bytes">The request body size in bytes.</param>
+    /// <param name="method">The HTTP method, recorded as the <c>method</c> tag.</param>
     public void RecordRequestSize(long bytes, string method)
     {
         var tags = new TagList
@@ -306,6 +376,11 @@ public sealed class PortaMetrics
         _requestSize.Record(bytes, tags);
     }
 
+    /// <summary>
+    /// Records the response body size on the <c>bff.response.size</c> histogram.
+    /// </summary>
+    /// <param name="bytes">The response body size in bytes.</param>
+    /// <param name="statusCode">The response status code, recorded as the <c>status_code</c> tag.</param>
     public void RecordResponseSize(long bytes, int statusCode)
     {
         var tags = new TagList
@@ -317,11 +392,24 @@ public sealed class PortaMetrics
     }
 
     // Active request tracking
+
+    /// <summary>
+    /// Increments the <c>bff.requests.active</c> up-down counter to track an in-flight request.
+    /// </summary>
     public void IncrementActiveRequests() => _activeRequests.Add(1);
 
+    /// <summary>
+    /// Decrements the <c>bff.requests.active</c> up-down counter when an in-flight request completes.
+    /// </summary>
     public void DecrementActiveRequests() => _activeRequests.Add(-1);
 
     // Lock cleanup metrics
+
+    /// <summary>
+    /// Records a stale-lock cleanup run: increments the <c>bff.session.lock_cleanup_runs</c> counter,
+    /// and increments <c>bff.session.stale_locks_cleaned</c> by the number of locks removed when greater than zero.
+    /// </summary>
+    /// <param name="staleLocksCleaned">The number of stale user refresh locks cleaned up during this run.</param>
     public void RecordLockCleanup(int staleLocksCleaned)
     {
         _lockCleanupRuns.Add(1);

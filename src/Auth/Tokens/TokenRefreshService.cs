@@ -21,6 +21,10 @@ public sealed class TokenRefreshService(
     IOptions<PortaCoreOptions> coreOptions,
     ILogger<TokenRefreshService> logger) : ITokenRefreshService
 {
+    /// <summary>
+    /// The name of the named <see cref="HttpClient"/> (registered via <see cref="IHttpClientFactory"/>)
+    /// used for token-endpoint calls. Carries Porta's configured timeout and resilience pipeline.
+    /// </summary>
     public const string HttpClientName = AuthenticationServiceExtensions.TokenHttpClientName;
 
     private readonly SessionAuthenticationConfiguration config = configOptions.Value;

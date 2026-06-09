@@ -41,6 +41,18 @@ public sealed class OidcBackChannelLogoutMiddleware(
     private readonly string _path = path;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
+    /// <summary>
+    /// Handles an IdP-initiated back-channel logout request. Requests to other paths pass through.
+    /// At the configured path the middleware validates the posted <c>logout_token</c> JWT (content
+    /// type, size, signature, <c>typ</c>, <c>events</c>, and <c>jti</c> replay protection), then
+    /// terminates the matching session(s) by <c>sid</c> or, failing that, by <c>sub</c>.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="discoveryService">Resolves the IdP signing keys used to validate the logout token.</param>
+    /// <param name="sessionManagement">Terminates the sessions identified by the logout token.</param>
+    /// <param name="configOptions">Session authentication configuration (authority, client id) used during validation.</param>
+    /// <param name="replayCache">Distributed cache tracking consumed <c>jti</c> values for replay protection.</param>
+    /// <returns>A task that completes when the request has been handled.</returns>
     public async Task InvokeAsync(
         HttpContext context,
         IDiscoveryService discoveryService,

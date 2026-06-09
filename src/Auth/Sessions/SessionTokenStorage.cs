@@ -15,6 +15,7 @@ public sealed class SessionTokenStorage(
 {
     private readonly IDataProtector? _protector = dataProtectionProvider?.CreateProtector("Porta.SessionTokens.v1");
 
+    /// <inheritdoc/>
     public Task<string?> GetTokenAsync(HttpContext context, string key)
     {
         try
@@ -45,6 +46,7 @@ public sealed class SessionTokenStorage(
         }
     }
 
+    /// <inheritdoc/>
     public Task<bool> SetTokenAsync(HttpContext context, string key, string value)
     {
         try
@@ -60,6 +62,7 @@ public sealed class SessionTokenStorage(
         }
     }
 
+    /// <inheritdoc/>
     public Task RemoveTokenAsync(HttpContext context, string key)
     {
         try
@@ -73,6 +76,7 @@ public sealed class SessionTokenStorage(
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc/>
     public Task<T?> GetObjectAsync<T>(HttpContext context, string key) where T : class
     {
         try
@@ -108,6 +112,7 @@ public sealed class SessionTokenStorage(
         }
     }
 
+    /// <inheritdoc/>
     public Task<bool> SetObjectAsync<T>(HttpContext context, string key, T value) where T : class
     {
         try
@@ -124,9 +129,11 @@ public sealed class SessionTokenStorage(
         }
     }
 
+    /// <inheritdoc/>
     public Task RemoveObjectAsync(HttpContext context, string key)
         => RemoveTokenAsync(context, key);
 
+    /// <inheritdoc/>
     public Task<bool> ClearAllAsync(HttpContext context)
     {
         try

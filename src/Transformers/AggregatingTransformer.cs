@@ -60,6 +60,7 @@ public abstract class AggregatingTransformer<TResponse> : MultiBackendTransforme
         return _builder;
     }
 
+    /// <inheritdoc/>
     public override async Task<TResponse> TransformAsync(TransformerContext context)
     {
         InitializeLogger(context);
@@ -244,7 +245,7 @@ internal sealed class BackendCallConfig(string name, Type responseType)
 }
 
 /// <summary>
-/// Outcome of a single backend call inside an <see cref="AggregatingTransformer"/>.
+/// Outcome of a single backend call inside an <see cref="AggregatingTransformer{TResponse}"/>.
 /// Lets downstream `MapResults` distinguish "backend returned null" (call
 /// completed, result was empty) from "backend threw" (call failed) - both of
 /// which previously surfaced as a null value in the results dictionary.

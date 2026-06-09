@@ -18,6 +18,14 @@ public sealed class DataProtectionDbContext : DbContext, IDataProtectionKeyConte
 {
     private readonly DataProtectionDbContextOptions _tableOptions;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DataProtectionDbContext"/> class.
+    /// </summary>
+    /// <param name="options">The EF Core options used to configure the context (provider, connection, etc.).</param>
+    /// <param name="tableOptions">
+    /// Optional table/schema configuration for the Data Protection keys table. When
+    /// <see langword="null"/>, the defaults on <see cref="DataProtectionDbContextOptions"/> are used.
+    /// </param>
     public DataProtectionDbContext(
         DbContextOptions<DataProtectionDbContext> options,
         IOptions<DataProtectionDbContextOptions>? tableOptions = null)
@@ -31,6 +39,7 @@ public sealed class DataProtectionDbContext : DbContext, IDataProtectionKeyConte
     /// </summary>
     public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
 
+    /// <inheritdoc/>
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

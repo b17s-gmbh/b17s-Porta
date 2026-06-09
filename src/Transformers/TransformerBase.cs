@@ -23,6 +23,17 @@ public abstract class TransformerBase<TRequest, TResponse> : ITransformer<TReque
     // request this is always the real logger.
     protected ILogger Logger { get; private set; } = NullLogger.Instance;
 
+    /// <summary>
+    /// Transforms the incoming request into the response. Implementations call the configured
+    /// backend(s) (e.g. via <see cref="CallBackendAsync(TRequest, TransformerContext)"/>) and shape
+    /// the result, or write an error response directly to the HTTP context.
+    /// </summary>
+    /// <param name="request">
+    /// The deserialized request body, or <see langword="null"/> when the incoming request carried no
+    /// JSON body.
+    /// </param>
+    /// <param name="context">The transformer context for the current request.</param>
+    /// <returns>The response to serialize to the client.</returns>
     public abstract Task<TResponse> TransformAsync(TRequest? request, TransformerContext context);
 
     /// <summary>
@@ -263,6 +274,14 @@ public abstract class TransformerBase<TResponse> : ITransformer<TResponse>
     // request this is always the real logger.
     protected ILogger Logger { get; private set; } = NullLogger.Instance;
 
+    /// <summary>
+    /// Transforms the current request into the response. Implementations call the configured
+    /// backend(s) (e.g. via <see cref="CallBackendAsync(TransformerContext)"/>) and shape the result,
+    /// or write an error response directly to the HTTP context. This overload ignores any request
+    /// body.
+    /// </summary>
+    /// <param name="context">The transformer context for the current request.</param>
+    /// <returns>The response to serialize to the client.</returns>
     public abstract Task<TResponse> TransformAsync(TransformerContext context);
 
     /// <summary>

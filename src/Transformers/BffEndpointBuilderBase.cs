@@ -18,6 +18,10 @@ public abstract class BffEndpointBuilderBase<TBuilder>
     private protected TimeSpan? _timeout;
     private protected string? _backendAuthPolicy;
 
+    /// <summary>
+    /// The current instance typed as the most-derived builder (CRTP), so fluent setters can return
+    /// <typeparamref name="TBuilder"/> for chaining.
+    /// </summary>
     protected TBuilder Self => (TBuilder)this;
 
     /// <summary>

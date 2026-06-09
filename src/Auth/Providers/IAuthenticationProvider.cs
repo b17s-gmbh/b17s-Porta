@@ -57,6 +57,7 @@ public interface IAuthenticationProvider
     /// Called for each request to establish the authentication context.
     /// </summary>
     /// <param name="context">The HTTP context for the current request</param>
+    /// <param name="cancellationToken">Cancellation token tied to the inbound request lifetime</param>
     /// <returns>
     /// An <see cref="AuthenticationContext"/> containing the user's authentication state.
     /// Returns an empty context (IsAuthenticated = false) if the user is not authenticated.
@@ -108,6 +109,7 @@ public interface IAuthenticationProvider
     /// Refreshes the authentication context when tokens are expired or about to expire.
     /// </summary>
     /// <param name="current">The current authentication context to refresh</param>
+    /// <param name="cancellationToken">Cancellation token tied to the inbound request lifetime</param>
     /// <returns>
     /// A new <see cref="AuthenticationContext"/> with refreshed tokens, or null if refresh failed.
     /// </returns>

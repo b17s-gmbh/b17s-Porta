@@ -10,8 +10,24 @@ namespace b17s.Porta.Middleware;
 /// </summary>
 public interface IReturnUrlProtector
 {
+    /// <summary>
+    /// Wraps a return URL into a signed, time-limited opaque token suitable for use as the
+    /// <c>return_url</c> query parameter on the login endpoint.
+    /// </summary>
+    /// <param name="returnUrl">The post-login destination to protect. Must be non-empty.</param>
+    /// <param name="lifetime">How long the issued token remains valid.</param>
+    /// <returns>The protected token.</returns>
     string Protect(string returnUrl, TimeSpan lifetime);
 
+    /// <summary>
+    /// Verifies and unwraps a token previously issued by <see cref="Protect"/>, recovering the
+    /// original return URL. Fails for tokens that are tampered, expired, or signed with a different key.
+    /// </summary>
+    /// <param name="token">The protected token to verify.</param>
+    /// <param name="returnUrl">
+    /// When this method returns <see langword="true"/>, the recovered return URL; otherwise an empty string.
+    /// </param>
+    /// <returns><see langword="true"/> if the token was valid and a non-empty URL was recovered; otherwise <see langword="false"/>.</returns>
     bool TryUnprotect(string token, out string returnUrl);
 }
 

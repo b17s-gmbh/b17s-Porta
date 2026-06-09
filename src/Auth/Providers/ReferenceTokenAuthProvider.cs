@@ -28,6 +28,7 @@ public sealed class ReferenceTokenAuthProvider(
     private ReferenceTokenAuthOptions Options => optionsMonitor.CurrentValue;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
+    /// <inheritdoc/>
     public async Task<AuthenticationContext> GetAuthContextAsync(HttpContext context, CancellationToken cancellationToken = default)
     {
         var options = Options;
@@ -241,6 +242,7 @@ public sealed class ReferenceTokenAuthProvider(
     /// </summary>
     public Task<AuthenticationContext?> RefreshAsync(AuthenticationContext current, CancellationToken cancellationToken = default) => Task.FromResult<AuthenticationContext?>(null);
 
+    /// <inheritdoc/>
     public async Task InvalidateAsync(HttpContext context, CancellationToken cancellationToken = default)
     {
         var options = Options;

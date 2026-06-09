@@ -42,7 +42,7 @@ public static class PortaServiceExtensions
     /// </list>
     /// </para>
     /// <para>
-    /// For OIDC authentication, also call <see cref="AddPortaOidcAuth"/>.
+    /// For OIDC authentication, also call <see cref="AddPortaOidcAuth(IServiceCollection, Action{OidcAuthOptions})"/>.
     /// </para>
     /// </remarks>
     /// <example>
@@ -279,7 +279,7 @@ public static class PortaServiceExtensions
 
     /// <summary>
     /// Adds OIDC authentication with session-based token storage.
-    /// This is an opt-in addition to <see cref="AddPortaCore"/>.
+    /// This is an opt-in addition to <see cref="AddPortaCore(IServiceCollection, IConfiguration, string)"/>.
     /// </summary>
     /// <param name="services">The service collection</param>
     /// <param name="configureOptions">Action to configure OIDC options</param>

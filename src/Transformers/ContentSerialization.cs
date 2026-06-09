@@ -32,9 +32,24 @@ public enum ContentType
 /// </summary>
 public static class ContentTypes
 {
+    /// <summary>
+    /// The JSON media type: <c>application/json</c>.
+    /// </summary>
     public const string Json = "application/json";
+
+    /// <summary>
+    /// The XML media type: <c>application/xml</c>.
+    /// </summary>
     public const string Xml = "application/xml";
+
+    /// <summary>
+    /// The legacy text XML media type: <c>text/xml</c>. Treated equivalently to <see cref="Xml"/>.
+    /// </summary>
     public const string TextXml = "text/xml";
+
+    /// <summary>
+    /// The form URL-encoded media type: <c>application/x-www-form-urlencoded</c>.
+    /// </summary>
     public const string FormUrlEncoded = "application/x-www-form-urlencoded";
 
     /// <summary>
@@ -124,8 +139,10 @@ public sealed class ContentSerializer : IContentSerializer
         MaxCharactersInDocument = 0
     };
 
+    /// <inheritdoc/>
     public string Serialize<T>(T value, ContentType contentType) => Serialize(value!, typeof(T), contentType);
 
+    /// <inheritdoc/>
     public string Serialize(object value, Type type, ContentType contentType)
     {
         return contentType switch
@@ -137,8 +154,10 @@ public sealed class ContentSerializer : IContentSerializer
         };
     }
 
+    /// <inheritdoc/>
     public T? Deserialize<T>(string content, ContentType contentType) => (T?)Deserialize(content, typeof(T), contentType);
 
+    /// <inheritdoc/>
     public object? Deserialize(string content, Type type, ContentType contentType)
     {
         if (string.IsNullOrWhiteSpace(content))

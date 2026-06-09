@@ -24,6 +24,7 @@ public sealed class SessionAuthProvider(
     private const string CookieScheme = CookieAuthenticationDefaults.AuthenticationScheme;
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
+    /// <inheritdoc/>
     public async Task<AuthenticationContext> GetAuthContextAsync(HttpContext context, CancellationToken cancellationToken = default)
     {
         var auth = await context.AuthenticateAsync(CookieScheme);
@@ -67,6 +68,7 @@ public sealed class SessionAuthProvider(
         return authContext;
     }
 
+    /// <inheritdoc/>
     public async Task<AuthenticationContext?> RefreshAsync(AuthenticationContext current, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(current.RefreshToken))
@@ -106,6 +108,7 @@ public sealed class SessionAuthProvider(
         }
     }
 
+    /// <inheritdoc/>
     public async Task InvalidateAsync(HttpContext context, CancellationToken cancellationToken = default)
     {
         await context.SignOutAsync(CookieScheme);

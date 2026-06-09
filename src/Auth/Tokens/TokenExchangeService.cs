@@ -23,6 +23,7 @@ public sealed class TokenExchangeService(
 
     private readonly PortaCoreOptions _coreOptions = coreOptions.Value;
 
+    /// <inheritdoc/>
     public async Task<TokenExchangeResult> ExchangeAsync(string accessToken, ApiConfiguration apiConfig, CancellationToken cancellationToken = default)
     {
         logger.TokenExchangeStarted(apiConfig.ApiPath, apiConfig.ApiScopes, apiConfig.ApiAudience);

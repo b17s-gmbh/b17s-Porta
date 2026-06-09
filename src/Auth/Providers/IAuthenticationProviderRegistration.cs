@@ -15,6 +15,12 @@ namespace b17s.Porta.Auth.Providers;
 /// </remarks>
 public interface IAuthenticationProviderRegistration
 {
+    /// <summary>
+    /// Gets the registered <see cref="IAuthenticationProvider"/> instance. The DI factory
+    /// for <see cref="IAuthenticationProvider"/> resolves every registration's
+    /// <see cref="Provider"/> and either returns the single one directly or wraps them in a
+    /// composite when more than one is registered.
+    /// </summary>
     IAuthenticationProvider Provider { get; }
 }
 

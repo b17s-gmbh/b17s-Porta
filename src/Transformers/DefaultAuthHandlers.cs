@@ -18,8 +18,10 @@ namespace b17s.Porta.Transformers;
 /// </summary>
 public sealed class NoneAuthHandler : IBackendAuthHandler
 {
+    /// <inheritdoc/>
     public string PolicyName => BackendAuthPolicies.None;
 
+    /// <inheritdoc/>
     public Task ApplyAuthAsync(HttpRequestMessage request, BackendAuthContext context)
         // No authentication applied
         => Task.CompletedTask;
@@ -31,8 +33,10 @@ public sealed class NoneAuthHandler : IBackendAuthHandler
 /// </summary>
 public sealed class BearerTokenAuthHandler(ILogger<BearerTokenAuthHandler> logger) : IBackendAuthHandler
 {
+    /// <inheritdoc/>
     public string PolicyName => BackendAuthPolicies.BearerToken;
 
+    /// <inheritdoc/>
     public Task ApplyAuthAsync(HttpRequestMessage request, BackendAuthContext context)
     {
         if (!string.IsNullOrEmpty(context.AccessToken))
@@ -64,8 +68,10 @@ public sealed class BasicAuthHandler(
 {
     private readonly BackendServiceOptions _options = options.Value;
 
+    /// <inheritdoc/>
     public string PolicyName => BackendAuthPolicies.BasicAuth;
 
+    /// <inheritdoc/>
     public Task ApplyAuthAsync(HttpRequestMessage request, BackendAuthContext context)
     {
         var backendName = context.BackendRequest.BackendName;
@@ -159,8 +165,10 @@ public sealed class TokenExchangeAuthHandler(
     private readonly BackendServiceOptions _options = options.Value;
     private readonly SessionAuthenticationConfiguration? _sessionConfig = sessionConfig?.Value;
 
+    /// <inheritdoc/>
     public string PolicyName => BackendAuthPolicies.TokenExchange;
 
+    /// <inheritdoc/>
     public async Task ApplyAuthAsync(HttpRequestMessage request, BackendAuthContext context)
     {
         // Static configuration / dependency failures below throw BackendAuthConfigurationException

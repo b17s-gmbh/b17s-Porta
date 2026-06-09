@@ -38,6 +38,13 @@ public sealed class TrustedHostValidator : ITrustedHostValidator
     private readonly List<string> _trustedHosts = [];
     private readonly ILogger<TrustedHostValidator> _logger;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="TrustedHostValidator"/> class, compiling the
+    /// configured <see cref="PortaCoreOptions.TrustedHosts"/> patterns into regular expressions for
+    /// efficient matching at validation time.
+    /// </summary>
+    /// <param name="options">Porta core options supplying the trusted-host allow-list.</param>
+    /// <param name="logger">Logger for diagnostic and audit messages.</param>
     public TrustedHostValidator(
         IOptions<PortaCoreOptions> options,
         ILogger<TrustedHostValidator> logger)
@@ -58,6 +65,7 @@ public sealed class TrustedHostValidator : ITrustedHostValidator
         }
     }
 
+    /// <inheritdoc/>
     public void ValidateUrl(string url, string endpointName)
     {
         if (_trustedPatterns.Count == 0)
@@ -89,6 +97,7 @@ public sealed class TrustedHostValidator : ITrustedHostValidator
         _logger.ValidatedTrustedHost(endpointName, url);
     }
 
+    /// <inheritdoc/>
     public bool IsTrusted(string url)
     {
         if (_trustedPatterns.Count == 0)

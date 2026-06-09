@@ -88,9 +88,15 @@ public sealed class GraphQLError
 /// </summary>
 public sealed class GraphQLLocation
 {
+    /// <summary>
+    /// One-based line number in the GraphQL query where the error occurred.
+    /// </summary>
     [JsonPropertyName("line")]
     public int Line { get; init; }
 
+    /// <summary>
+    /// One-based column number in the GraphQL query where the error occurred.
+    /// </summary>
     [JsonPropertyName("column")]
     public int Column { get; init; }
 }

@@ -234,10 +234,30 @@ public readonly struct RawBackendResult : IDisposable
 /// </summary>
 public readonly struct BackendObjectResult
 {
+    /// <summary>
+    /// Indicates whether the backend call succeeded (2xx status code).
+    /// </summary>
     public bool IsSuccess { get; }
+
+    /// <summary>
+    /// The (possibly error-mapped) HTTP status code associated with the result.
+    /// </summary>
     public int StatusCode { get; }
+
+    /// <summary>
+    /// The deserialized response object. Available only on success; <c>null</c> when the
+    /// backend returned an empty body or when the call failed.
+    /// </summary>
     public object? Value { get; }
+
+    /// <summary>
+    /// The error message when the call failed; <c>null</c> on success.
+    /// </summary>
     public string? Error { get; }
+
+    /// <summary>
+    /// The category of error that occurred. <see cref="BackendErrorType.None"/> on success.
+    /// </summary>
     public BackendErrorType ErrorType { get; }
 
     private BackendObjectResult(bool isSuccess, int statusCode, object? value, string? error, BackendErrorType errorType)
@@ -249,7 +269,19 @@ public readonly struct BackendObjectResult
         ErrorType = errorType;
     }
 
+    /// <summary>
+    /// Creates a successful result carrying the deserialized response object.
+    /// </summary>
+    /// <param name="value">The deserialized response object (may be <c>null</c> for an empty body).</param>
+    /// <param name="statusCode">The HTTP status code. Defaults to 200.</param>
     public static BackendObjectResult Success(object? value, int statusCode = 200) => new(true, statusCode, value, null, BackendErrorType.None);
+
+    /// <summary>
+    /// Creates a failed result with the given status code, error message, and error type.
+    /// </summary>
+    /// <param name="statusCode">The HTTP status code to surface.</param>
+    /// <param name="error">A human-readable error message.</param>
+    /// <param name="errorType">The category of error. Defaults to <see cref="BackendErrorType.Unknown"/>.</param>
     public static BackendObjectResult Failure(int statusCode, string error, BackendErrorType errorType = BackendErrorType.Unknown) => new(false, statusCode, null, error, errorType);
 }
 
@@ -258,11 +290,35 @@ public readonly struct BackendObjectResult
 /// </summary>
 public enum BackendErrorType
 {
+    /// <summary>
+    /// No error - the backend call succeeded.
+    /// </summary>
     None,
+
+    /// <summary>
+    /// The backend could not be reached (connection failure, DNS error, or other transport-level fault).
+    /// Surfaced as 502 Bad Gateway.
+    /// </summary>
     NetworkError,
+
+    /// <summary>
+    /// Authentication against the backend failed (e.g. the forwarded or exchanged credential was rejected).
+    /// </summary>
     AuthenticationError,
+
+    /// <summary>
+    /// The backend rejected the request as forbidden - authenticated but not authorized for the resource.
+    /// </summary>
     AuthorizationError,
+
+    /// <summary>
+    /// The backend call timed out before a response was received. Surfaced as 504 Gateway Timeout.
+    /// </summary>
     Timeout,
+
+    /// <summary>
+    /// The backend returned a 5xx server error.
+    /// </summary>
     ServerError,
     /// <summary>
     /// 4xx returned by the backend that isn't 401 or 403 - typically a malformed
@@ -271,6 +327,11 @@ public enum BackendErrorType
     /// the caller) was the source of the problem.
     /// </summary>
     ClientError,
+
+    /// <summary>
+    /// The backend returned a 2xx status but the response body could not be parsed,
+    /// was malformed, or exceeded the configured maximum response size.
+    /// </summary>
     InvalidResponse,
     /// <summary>
     /// The BFF could not apply backend authentication because of a server-side
@@ -281,6 +342,10 @@ public enum BackendErrorType
     /// a genuine user-credential rejection.
     /// </summary>
     ConfigurationError,
+
+    /// <summary>
+    /// An unexpected or uncategorized error occurred.
+    /// </summary>
     Unknown
 }
 
@@ -289,9 +354,24 @@ public enum BackendErrorType
 /// </summary>
 public readonly struct BackendResult
 {
+    /// <summary>
+    /// Indicates whether the backend call succeeded (2xx status code).
+    /// </summary>
     public bool IsSuccess { get; }
+
+    /// <summary>
+    /// The (possibly error-mapped) HTTP status code associated with the result.
+    /// </summary>
     public int StatusCode { get; }
+
+    /// <summary>
+    /// The error message when the call failed; <c>null</c> on success.
+    /// </summary>
     public string? Error { get; }
+
+    /// <summary>
+    /// The category of error that occurred. <see cref="BackendErrorType.None"/> on success.
+    /// </summary>
     public BackendErrorType ErrorType { get; }
 
     private BackendResult(bool isSuccess, int statusCode, string? error, BackendErrorType errorType)
@@ -302,11 +382,42 @@ public readonly struct BackendResult
         ErrorType = errorType;
     }
 
+    /// <summary>
+    /// Creates a successful result.
+    /// </summary>
+    /// <param name="statusCode">The HTTP status code. Defaults to 200.</param>
     public static BackendResult Success(int statusCode = 200) => new(true, statusCode, null, BackendErrorType.None);
+
+    /// <summary>
+    /// Creates a failed result with the given status code, error message, and error type.
+    /// </summary>
+    /// <param name="statusCode">The HTTP status code to surface.</param>
+    /// <param name="error">A human-readable error message.</param>
+    /// <param name="errorType">The category of error. Defaults to <see cref="BackendErrorType.Unknown"/>.</param>
     public static BackendResult Failure(int statusCode, string error, BackendErrorType errorType = BackendErrorType.Unknown) => new(false, statusCode, error, errorType);
+
+    /// <summary>
+    /// Creates an authentication failure result (status 401, <see cref="BackendErrorType.AuthenticationError"/>).
+    /// </summary>
+    /// <param name="error">A human-readable error message.</param>
     public static BackendResult AuthenticationFailure(string error) => new(false, 401, error, BackendErrorType.AuthenticationError);
+
+    /// <summary>
+    /// Creates an authorization failure result (status 403, <see cref="BackendErrorType.AuthorizationError"/>).
+    /// </summary>
+    /// <param name="error">A human-readable error message.</param>
     public static BackendResult AuthorizationFailure(string error) => new(false, 403, error, BackendErrorType.AuthorizationError);
+
+    /// <summary>
+    /// Creates a network failure result (status 502, <see cref="BackendErrorType.NetworkError"/>).
+    /// </summary>
+    /// <param name="error">A human-readable error message.</param>
     public static BackendResult NetworkFailure(string error) => new(false, 502, error, BackendErrorType.NetworkError);
+
+    /// <summary>
+    /// Creates a timeout failure result (status 504, <see cref="BackendErrorType.Timeout"/>).
+    /// </summary>
+    /// <param name="error">A human-readable error message.</param>
     public static BackendResult TimeoutFailure(string error) => new(false, 504, error, BackendErrorType.Timeout);
 }
 
@@ -315,10 +426,30 @@ public readonly struct BackendResult
 /// </summary>
 public readonly struct BackendResult<T>
 {
+    /// <summary>
+    /// Indicates whether the backend call succeeded (2xx status code).
+    /// </summary>
     public bool IsSuccess { get; }
+
+    /// <summary>
+    /// The (possibly error-mapped) HTTP status code associated with the result.
+    /// </summary>
     public int StatusCode { get; }
+
+    /// <summary>
+    /// The deserialized response value. Available only on success; <c>default</c> when the
+    /// backend returned an empty body or when the call failed.
+    /// </summary>
     public T? Value { get; }
+
+    /// <summary>
+    /// The error message when the call failed; <c>null</c> on success.
+    /// </summary>
     public string? Error { get; }
+
+    /// <summary>
+    /// The category of error that occurred. <see cref="BackendErrorType.None"/> on success.
+    /// </summary>
     public BackendErrorType ErrorType { get; }
 
     private BackendResult(bool isSuccess, int statusCode, T? value, string? error, BackendErrorType errorType)
@@ -330,11 +461,43 @@ public readonly struct BackendResult<T>
         ErrorType = errorType;
     }
 
+    /// <summary>
+    /// Creates a successful result carrying the deserialized response value.
+    /// </summary>
+    /// <param name="value">The deserialized response value.</param>
+    /// <param name="statusCode">The HTTP status code. Defaults to 200.</param>
     public static BackendResult<T> Success(T value, int statusCode = 200) => new(true, statusCode, value, null, BackendErrorType.None);
+
+    /// <summary>
+    /// Creates a failed result with the given status code, error message, and error type.
+    /// </summary>
+    /// <param name="statusCode">The HTTP status code to surface.</param>
+    /// <param name="error">A human-readable error message.</param>
+    /// <param name="errorType">The category of error. Defaults to <see cref="BackendErrorType.Unknown"/>.</param>
     public static BackendResult<T> Failure(int statusCode, string error, BackendErrorType errorType = BackendErrorType.Unknown) => new(false, statusCode, default, error, errorType);
+
+    /// <summary>
+    /// Creates an authentication failure result (status 401, <see cref="BackendErrorType.AuthenticationError"/>).
+    /// </summary>
+    /// <param name="error">A human-readable error message.</param>
     public static BackendResult<T> AuthenticationFailure(string error) => new(false, 401, default, error, BackendErrorType.AuthenticationError);
+
+    /// <summary>
+    /// Creates an authorization failure result (status 403, <see cref="BackendErrorType.AuthorizationError"/>).
+    /// </summary>
+    /// <param name="error">A human-readable error message.</param>
     public static BackendResult<T> AuthorizationFailure(string error) => new(false, 403, default, error, BackendErrorType.AuthorizationError);
+
+    /// <summary>
+    /// Creates a network failure result (status 502, <see cref="BackendErrorType.NetworkError"/>).
+    /// </summary>
+    /// <param name="error">A human-readable error message.</param>
     public static BackendResult<T> NetworkFailure(string error) => new(false, 502, default, error, BackendErrorType.NetworkError);
+
+    /// <summary>
+    /// Creates a timeout failure result (status 504, <see cref="BackendErrorType.Timeout"/>).
+    /// </summary>
+    /// <param name="error">A human-readable error message.</param>
     public static BackendResult<T> TimeoutFailure(string error) => new(false, 504, default, error, BackendErrorType.Timeout);
 }
 

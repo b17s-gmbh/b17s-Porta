@@ -48,10 +48,13 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
     }
 
     /// <summary>
-    /// Subclass hook: invoke the transformer's TransformAsync overload. The
-    /// `<TRequest, TResponse>` variant deserializes the request body before
-    /// calling; the `<TResponse>` variant ignores the body.
+    /// Subclass hook: invoke the transformer's <c>TransformAsync</c> overload. The
+    /// <c>TransformerEndpointBuilder{TTransformer, TRequest, TResponse}</c> variant deserializes the
+    /// request body before calling; the <c>TransformerEndpointBuilder{TTransformer, TResponse}</c>
+    /// variant ignores the body.
     /// </summary>
+    /// <param name="httpContext">The current HTTP context.</param>
+    /// <param name="transformerContext">The transformer context for the current request.</param>
     /// <returns>The transformer response, serialized to JSON by the caller.</returns>
     protected abstract Task<object?> InvokeTransformerAsync(HttpContext httpContext, TransformerContext transformerContext);
 
@@ -634,6 +637,7 @@ public sealed class TransformerEndpointBuilder<TTransformer, TRequest, TResponse
     internal TransformerEndpointBuilder(IEndpointRouteBuilder endpoints, IServiceProvider services)
         : base(endpoints, services) { }
 
+    /// <inheritdoc/>
     protected override async Task<object?> InvokeTransformerAsync(HttpContext httpContext, TransformerContext transformerContext)
     {
         TRequest? requestBody = default;
@@ -679,6 +683,7 @@ public sealed class TransformerEndpointBuilder<TTransformer, TResponse>
     internal TransformerEndpointBuilder(IEndpointRouteBuilder endpoints, IServiceProvider services)
         : base(endpoints, services) { }
 
+    /// <inheritdoc/>
     protected override async Task<object?> InvokeTransformerAsync(HttpContext httpContext, TransformerContext transformerContext)
     {
         var transformer = httpContext.RequestServices.GetRequiredService<TTransformer>();

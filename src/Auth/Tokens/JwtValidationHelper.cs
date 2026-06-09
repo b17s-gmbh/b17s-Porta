@@ -11,13 +11,50 @@ namespace b17s.Porta.Auth.Tokens;
 /// </summary>
 public record JwtValidationParameters
 {
+    /// <summary>
+    /// The OIDC authority (issuer) URL. Used to fetch discovery metadata and signing keys, and as
+    /// the expected issuer when <see cref="ValidateIssuer"/> is enabled.
+    /// </summary>
     public required string Authority { get; init; }
+
+    /// <summary>
+    /// The audience the token must be issued for, checked when <see cref="ValidateAudience"/> is enabled.
+    /// </summary>
     public required string Audience { get; init; }
+
+    /// <summary>
+    /// Whether to validate that the token's issuer matches the authority's discovered issuer. Defaults to <see langword="true"/>.
+    /// </summary>
     public bool ValidateIssuer { get; init; } = true;
+
+    /// <summary>
+    /// Whether to validate that the token's audience contains <see cref="Audience"/>. Defaults to <see langword="true"/>.
+    /// </summary>
     public bool ValidateAudience { get; init; } = true;
+
+    /// <summary>
+    /// Whether to require and verify the token's signature against the authority's signing keys.
+    /// Defaults to <see langword="true"/>. Disabling this removes the signature trust check and
+    /// should only be done in tests.
+    /// </summary>
     public bool ValidateSignature { get; init; } = true;
+
+    /// <summary>
+    /// Whether to validate the token's lifetime (<c>nbf</c>/<c>exp</c>), allowing for <see cref="ClockSkew"/>. Defaults to <see langword="true"/>.
+    /// </summary>
     public bool ValidateLifetime { get; init; } = true;
+
+    /// <summary>
+    /// Permitted clock skew applied to lifetime validation to tolerate small clock differences
+    /// between the BFF and the authority. Defaults to five minutes.
+    /// </summary>
     public TimeSpan ClockSkew { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// When set, the token's <c>nonce</c> claim must equal this value; otherwise validation fails
+    /// with <see cref="JwtValidationFailureReason.NonceMismatch"/>. Used for id_token replay
+    /// protection in the auth-code callback flow. When <see langword="null"/>, no nonce check is performed.
+    /// </summary>
     public string? ExpectedNonce { get; init; }
 }
 
@@ -27,25 +64,68 @@ public record JwtValidationParameters
 /// </summary>
 public enum JwtValidationFailureReason
 {
+    /// <summary>No failure; the token validated successfully.</summary>
     None,
+
+    /// <summary>No OIDC authority was configured, so validation could not be attempted.</summary>
     AuthorityNotConfigured,
+
+    /// <summary>OIDC discovery metadata (including signing keys) could not be retrieved from the authority.</summary>
     DiscoveryFailed,
+
+    /// <summary>The token's signature did not verify against the authority's signing keys.</summary>
     SignatureInvalid,
+
+    /// <summary>The token's issuer did not match the authority's discovered issuer.</summary>
     IssuerInvalid,
+
+    /// <summary>The token's audience did not contain the configured audience.</summary>
     AudienceInvalid,
+
+    /// <summary>The token was expired (or not yet valid) beyond the permitted clock skew.</summary>
     Expired,
+
+    /// <summary>The validated security token was not a JWT, or the token was malformed.</summary>
     NotJwt,
+
+    /// <summary>The token's <c>nonce</c> claim did not match the expected value.</summary>
     NonceMismatch,
+
+    /// <summary>Validation failed for some other reason not covered by the more specific categories.</summary>
     Other
 }
 
+/// <summary>
+/// Outcome of a JWT validation attempt: either a success carrying the parsed token, or a failure
+/// carrying a categorized <see cref="JwtValidationFailureReason"/> and an optional diagnostic message.
+/// </summary>
+/// <param name="Token">The parsed token on success; <see langword="null"/> on failure.</param>
+/// <param name="Reason">The failure category, or <see cref="JwtValidationFailureReason.None"/> on success.</param>
+/// <param name="ErrorMessage">An optional diagnostic message describing the failure; <see langword="null"/> on success.</param>
 public readonly record struct JwtValidationResult(
     JsonWebToken? Token,
     JwtValidationFailureReason Reason,
     string? ErrorMessage)
 {
+    /// <summary>
+    /// Whether validation succeeded: a token was parsed and the reason is
+    /// <see cref="JwtValidationFailureReason.None"/>.
+    /// </summary>
     public bool IsValid => Token != null && Reason == JwtValidationFailureReason.None;
+
+    /// <summary>
+    /// Creates a successful result for the given parsed token.
+    /// </summary>
+    /// <param name="token">The validated, parsed token.</param>
+    /// <returns>A successful <see cref="JwtValidationResult"/>.</returns>
     public static JwtValidationResult Success(JsonWebToken token) => new(token, JwtValidationFailureReason.None, null);
+
+    /// <summary>
+    /// Creates a failed result with the given reason and optional diagnostic message.
+    /// </summary>
+    /// <param name="reason">The categorized failure reason.</param>
+    /// <param name="message">An optional diagnostic message; never includes token contents.</param>
+    /// <returns>A failed <see cref="JwtValidationResult"/>.</returns>
     public static JwtValidationResult Failure(JwtValidationFailureReason reason, string? message = null) => new(null, reason, message);
 }
 

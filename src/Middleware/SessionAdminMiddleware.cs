@@ -37,6 +37,15 @@ public sealed class SessionAdminMiddleware(
     private readonly SessionAdminOptions _options = options.Value;
     private readonly string _basePath = basePath.TrimEnd('/');
 
+    /// <summary>
+    /// Handles session-administration requests under the configured base path; other requests pass
+    /// through. Re-enforces the admin authorization policy, then dispatches: <c>GET</c> lists a
+    /// user's sessions by email, <c>DELETE</c> (with antiforgery) terminates a specific session by id
+    /// or all of a user's sessions by email. Unsupported methods return <c>405</c>.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="sessionManagement">Service used to query and terminate sessions.</param>
+    /// <returns>A task that completes when the request has been handled or passed to the next middleware.</returns>
     public async Task InvokeAsync(
         HttpContext context,
         ISessionManagementService sessionManagement)

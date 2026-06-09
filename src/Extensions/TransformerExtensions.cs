@@ -10,7 +10,7 @@ namespace b17s.Porta.Extensions;
 /// <summary>
 /// Extension methods for registering and mapping transformer endpoints.
 /// Core service registration (HttpClient, registry, metrics, etc.) lives in
-/// <see cref="PortaServiceExtensions.AddPortaCore(IServiceCollection, Action{PortaCoreOptions}?)"/>.
+/// <see cref="PortaServiceExtensions.AddPortaCore(IServiceCollection, Action{b17s.Porta.Configuration.PortaCoreOptions})"/>.
 /// </summary>
 public static class TransformerExtensions
 {

@@ -64,6 +64,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
+    /// <inheritdoc/>
     public async Task<string?> GetAccessTokenAsync(HttpContext context)
     {
         var auth = await context.AuthenticateAsync(CookieScheme);
@@ -89,6 +90,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         return await TryRefreshAsync(context, auth, refreshToken, fallback: accessToken);
     }
 
+    /// <inheritdoc/>
     public async Task<string?> ForceRefreshAsync(HttpContext context, string? staleAccessToken = null)
     {
         var auth = await context.AuthenticateAsync(CookieScheme);

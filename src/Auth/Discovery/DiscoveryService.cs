@@ -21,6 +21,7 @@ public sealed class DiscoveryService(
 {
     private readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _managers = new();
 
+    /// <inheritdoc/>
     public async Task<OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(authority))

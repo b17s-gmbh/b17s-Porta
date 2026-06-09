@@ -34,6 +34,15 @@ public sealed class OidcLogoutMiddleware(
     private readonly OidcLogoutOptions _options = options.Value;
     private readonly string _path = path;
 
+    /// <summary>
+    /// Handles a logout request at the configured path; other requests pass through. Requires POST
+    /// (and optional antiforgery) for CSRF protection, optionally revokes the refresh token against
+    /// the IdP (RFC 7009), tears down the server-side Porta session, and signs the caller out of the
+    /// cookie and (for global logout) OIDC schemes, returning JSON or a redirect per configuration.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <param name="tokenRevocationService">Service used to revoke the refresh token at the IdP when global logout is enabled.</param>
+    /// <returns>A task that completes when the request has been handled or passed to the next middleware.</returns>
     public async Task InvokeAsync(HttpContext context, ITokenRevocationService tokenRevocationService)
     {
         var requestPath = context.Request.Path.Value ?? string.Empty;

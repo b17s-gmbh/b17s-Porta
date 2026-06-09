@@ -53,7 +53,17 @@ public sealed class BackendCaller(
     private string? _rotatedToken;
     private string? _consumedStaleToken;
     private bool _refreshAttempted;
+    /// <summary>
+    /// The name of the named <see cref="HttpClient"/> used for backend calls without the
+    /// resilience (retry) pipeline. Registered by <c>AddPortaCore</c>.
+    /// </summary>
     public const string HttpClientName = "Porta.BackendCaller";
+
+    /// <summary>
+    /// The name of the named <see cref="HttpClient"/> used for backend calls with the standard
+    /// resilience (retry/back-off) pipeline, selected when <see cref="BackendRequest.EnableRetries"/>
+    /// is set. Registered by <c>AddPortaCore</c>.
+    /// </summary>
     public const string HttpClientNameWithRetries = "Porta.BackendCaller.WithRetries";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -156,6 +166,7 @@ public sealed class BackendCaller(
         return string.Concat(body.AsSpan(0, _maxBodyLogLength), "… (truncated, ", body.Length.ToString(System.Globalization.CultureInfo.InvariantCulture), " chars total)");
     }
 
+    /// <inheritdoc/>
     public async Task<BackendResult<TResponse>> CallAsync<TResponse>(BackendRequest request, CancellationToken cancellationToken)
     {
         var sendResult = await SendRequestAsync<object>(request, null, cancellationToken);
@@ -170,6 +181,7 @@ public sealed class BackendCaller(
         return await DeserializeResponseAsync<TResponse>(response, request, cancellationToken);
     }
 
+    /// <inheritdoc/>
     public async Task<BackendResult<TResponse>> CallAsync<TRequest, TResponse>(BackendRequest request, TRequest body, CancellationToken cancellationToken)
     {
         var sendResult = await SendRequestAsync(request, body, cancellationToken);
@@ -181,6 +193,7 @@ public sealed class BackendCaller(
         return await DeserializeResponseAsync<TResponse>(response, request, cancellationToken);
     }
 
+    /// <inheritdoc/>
     public async Task<BackendResult> CallAsync(BackendRequest request, CancellationToken cancellationToken)
     {
         var sendResult = await SendRequestAsync<object>(request, null, cancellationToken);
@@ -196,6 +209,7 @@ public sealed class BackendCaller(
         return BackendResult.Success((int)response.StatusCode);
     }
 
+    /// <inheritdoc/>
     public async Task<BackendResult> CallAsync<TRequest>(BackendRequest request, TRequest body, CancellationToken cancellationToken)
     {
         var sendResult = await SendRequestAsync(request, body, cancellationToken);
@@ -211,6 +225,7 @@ public sealed class BackendCaller(
         return BackendResult.Success((int)response.StatusCode);
     }
 
+    /// <inheritdoc/>
     public async Task<BackendObjectResult> CallAsync(BackendRequest request, Type responseType, CancellationToken cancellationToken)
     {
         var sendResult = await SendRequestAsync<object>(request, null, cancellationToken);
@@ -222,6 +237,7 @@ public sealed class BackendCaller(
         return await DeserializeResponseAsObjectAsync(response, request, responseType, cancellationToken);
     }
 
+    /// <inheritdoc/>
     public async Task<BackendObjectResult> CallWithBodyAsync(BackendRequest request, object body, Type responseType, CancellationToken cancellationToken)
     {
         var sendResult = await SendRequestAsync(request, body, cancellationToken);
@@ -233,6 +249,7 @@ public sealed class BackendCaller(
         return await DeserializeResponseAsObjectAsync(response, request, responseType, cancellationToken);
     }
 
+    /// <inheritdoc/>
     public async Task<GraphQLResult<TResponse>> CallGraphQLAsync<TResponse>(
         BackendRequest request,
         string query,
@@ -363,6 +380,7 @@ public sealed class BackendCaller(
         return GraphQLResult<TResponse>.Success(extractedData!, statusCode);
     }
 
+    /// <inheritdoc/>
     public async Task<RawBackendResult> CallRawAsync(BackendRequest request, CancellationToken cancellationToken)
     {
         var sendResult = await SendRawRequestAsync(request, null, null, cancellationToken);
@@ -373,6 +391,7 @@ public sealed class BackendCaller(
         return RawBackendResult.Success(sendResult.Response!);
     }
 
+    /// <inheritdoc/>
     public async Task<RawBackendResult> CallRawAsync(BackendRequest request, Stream requestBody, string contentType, CancellationToken cancellationToken)
     {
         var sendResult = await SendRawRequestAsync(request, requestBody, contentType, cancellationToken);
@@ -748,6 +767,9 @@ public sealed class BackendCaller(
         => request.BackendAuthPolicy
             ?? (request.UseTokenExchange ? BackendAuthPolicies.TokenExchange : BackendAuthPolicies.None);
 
+    /// <summary>
+    /// Releases the per-request refresh gate used to serialize the refresh-on-401 path.
+    /// </summary>
     public void Dispose() => _refreshGate.Dispose();
 
     /// <summary>

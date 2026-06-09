@@ -22,6 +22,14 @@ public sealed class OidcLoginMiddleware(
     private readonly string _path = path;
     private readonly string _signEndpointPath = path.TrimEnd('/') + "/sign-return-url";
 
+    /// <summary>
+    /// Handles login-related requests. At the sign-return-url path it issues a signed, time-limited
+    /// <c>return_url</c> token for authenticated callers; at the login path it resolves the post-login
+    /// destination (applying the open-redirect guard and signed-return-URL policy) and triggers the
+    /// framework OIDC challenge. All other requests pass through.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <returns>A task that completes when the request has been handled or passed to the next middleware.</returns>
     public async Task InvokeAsync(HttpContext context)
     {
         var requestPath = context.Request.Path.Value ?? string.Empty;
