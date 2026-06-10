@@ -46,6 +46,12 @@ public static class PortaServiceExtensions
     /// <para>
     /// For OIDC authentication, also call <see cref="AddPortaOidcAuth(IServiceCollection, Action{OidcAuthOptions})"/>.
     /// </para>
+    /// <para>
+    /// This method is idempotent: calling it more than once applies the additional
+    /// <paramref name="configureOptions"/> through the options pipeline but registers the
+    /// services only once, so named <see cref="HttpClient"/> configurations, resilience
+    /// handlers, and service descriptors are never duplicated.
+    /// </para>
     /// </remarks>
     /// <example>
     /// <code>
@@ -79,6 +85,19 @@ public static class PortaServiceExtensions
             // explicit configuration is supplied.
             services.AddOptions<PortaCoreOptions>();
         }
+
+        // Idempotency guard: AddHttpClient(name, ...) configurations accumulate on the
+        // named HttpClientFactoryOptions, so a second call would nest another resilience
+        // handler on the retry client (multiplying effective retry counts), duplicate the
+        // Accept header, and double every plain AddScoped/AddSingleton descriptor below.
+        // The options configuration above intentionally runs before the guard so repeated
+        // calls still compose through the options pipeline.
+        if (services.Any(d => d.ServiceType == typeof(PortaCoreMarker)))
+        {
+            return services;
+        }
+
+        services.AddSingleton<PortaCoreMarker>();
 
         // Register HttpContextAccessor (required for token forwarding)
         services.AddHttpContextAccessor();
@@ -352,6 +371,13 @@ public static class PortaServiceExtensions
     /// Use <c>builder.AddRedisDistributedCache("cache")</c> with Aspire or
     /// <c>services.AddStackExchangeRedisCache()</c> manually.
     /// </para>
+    /// <para>
+    /// This method is idempotent: calling it more than once (or combining it with
+    /// <see cref="AuthenticationServiceExtensions.AddPortaAuthentication(IServiceCollection, Action{SessionAuthenticationConfiguration}?)"/>,
+    /// which it wires internally) applies the additional <paramref name="configureOptions"/>
+    /// through the options pipeline but registers the cookie/OIDC authentication schemes and
+    /// services only once.
+    /// </para>
     /// </remarks>
     /// <example>
     /// <code>
@@ -419,6 +445,19 @@ public static class PortaServiceExtensions
     /// </summary>
     private static IServiceCollection AddPortaOidcAuthCore(this IServiceCollection services)
     {
+        // Idempotency guard: a second call would add a duplicate
+        // SessionAuthenticationConfiguration projection (re-running CopyOptions per
+        // options build). The Configure<OidcAuthOptions> in the public overloads runs
+        // before this guard so repeated calls still compose through the options
+        // pipeline; AddPortaAuthentication carries its own guard, so it is always
+        // safe to delegate to it.
+        if (services.Any(d => d.ServiceType == typeof(PortaOidcAuthMarker)))
+        {
+            return services.AddPortaAuthentication();
+        }
+
+        services.AddSingleton<PortaOidcAuthMarker>();
+
         // Validate OidcAuthOptions at host start so a misconfigured BFF fails on
         // boot rather than on the first OIDC redirect.
         services.TryAddEnumerable(
@@ -595,6 +634,20 @@ public static class PortaServiceExtensions
 
     private static void CopyOptions(OidcAuthOptions source, OidcAuthOptions target)
         => CopyOptions(source, (SessionAuthenticationConfiguration)target);
+
+    /// <summary>
+    /// Marker registration recording that <see cref="AddPortaCore(IServiceCollection, Action{PortaCoreOptions}?)"/>
+    /// has already run, making repeated calls no-ops for service registration
+    /// (options configuration still composes).
+    /// </summary>
+    private sealed class PortaCoreMarker;
+
+    /// <summary>
+    /// Marker registration recording that <see cref="AddPortaOidcAuthCore"/> has already
+    /// run, making repeated <c>AddPortaOidcAuth</c> calls no-ops for service registration
+    /// (options configuration still composes).
+    /// </summary>
+    private sealed class PortaOidcAuthMarker;
 
     #endregion
 }

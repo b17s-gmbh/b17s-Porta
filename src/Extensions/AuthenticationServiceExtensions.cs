@@ -53,6 +53,11 @@ public static class AuthenticationServiceExtensions
     /// use Redis/Valkey via Aspire (<c>builder.AddRedisDistributedCache("cache")</c>) or
     /// <c>services.AddStackExchangeRedisCache()</c>. For development falls back to an
     /// in-memory cache via <c>AddDistributedMemoryCache()</c>.
+    /// <para/>
+    /// This method is idempotent: calling it more than once (in either overload, or
+    /// implicitly via <c>AddPortaOidcAuth</c>) applies the additional options binding
+    /// through the options pipeline but registers the authentication schemes and
+    /// services only once.
     /// </summary>
     public static IServiceCollection AddPortaAuthentication(
         this IServiceCollection services,
@@ -99,6 +104,22 @@ public static class AuthenticationServiceExtensions
     private static IServiceCollection AddPortaAuthenticationCore(
         this IServiceCollection services)
     {
+        // Idempotency guard: a second pass would call AddCookie()/AddOpenIdConnect()
+        // again - the duplicate scheme registration throws
+        // "Scheme already exists: Cookies" at the first authentication resolve - and
+        // would stack a second resilience handler on the named token HttpClient plus
+        // duplicate every plain AddScoped descriptor (running SessionAuthProvider twice
+        // per request through the composite). This also makes AddPortaOidcAuth (which
+        // delegates here) safely combinable with a direct AddPortaAuthentication call.
+        // The Configure calls in the public overloads run before this guard so repeated
+        // calls still compose through the options pipeline.
+        if (services.Any(d => d.ServiceType == typeof(PortaAuthenticationMarker)))
+        {
+            return services;
+        }
+
+        services.AddSingleton<PortaAuthenticationMarker>();
+
         // Validate options up-front so a misconfigured BFF fails at boot rather than
         // on the first OIDC redirect. ValidateOnStart promotes validation from
         // "on first resolve" to "on host start" so the failure surfaces as a
@@ -560,11 +581,30 @@ public static class AuthenticationServiceExtensions
     /// <summary>
     /// Adds reference token authentication services (for API-to-API scenarios).
     /// </summary>
+    /// <remarks>
+    /// This method is idempotent: calling it more than once applies the additional
+    /// <paramref name="configureOptions"/> through the options pipeline but registers
+    /// the named <see cref="HttpClient"/>, services, and authentication provider only once.
+    /// </remarks>
+    /// <param name="services">The service collection</param>
+    /// <param name="configureOptions">Action to configure <see cref="ReferenceTokenAuthOptions"/></param>
+    /// <returns>The service collection for chaining</returns>
     public static IServiceCollection AddReferenceTokenAuthentication(
         this IServiceCollection services,
         Action<ReferenceTokenAuthOptions> configureOptions)
     {
         services.Configure(configureOptions);
+
+        // Idempotency guard: AddHttpClient(name, ...) configurations accumulate, so a
+        // second call would nest another resilience handler and duplicate the Accept
+        // header on the introspection client, and the plain AddScoped registration
+        // below would run the provider twice per request through the composite.
+        if (services.Any(d => d.ServiceType == typeof(ReferenceTokenAuthenticationMarker)))
+        {
+            return services;
+        }
+
+        services.AddSingleton<ReferenceTokenAuthenticationMarker>();
 
         services.AddHttpClient(ReferenceTokenService.HttpClientName, client =>
         {
@@ -599,6 +639,10 @@ public static class AuthenticationServiceExtensions
     /// pipeline, so <c>services.Configure&lt;JwtBearerAuthOptions&gt;(...)</c> /
     /// <c>PostConfigure&lt;JwtBearerAuthOptions&gt;(...)</c> registered before or after this call
     /// (e.g. injecting the authority from a secret store) is honored.
+    /// <para/>
+    /// This method is idempotent: calling it more than once applies the additional
+    /// <paramref name="configureOptions"/> through the options pipeline but registers
+    /// the Bearer scheme, handler binding, and authentication provider only once.
     /// </remarks>
     /// <param name="services">The service collection</param>
     /// <param name="configureOptions">Action to configure <see cref="JwtBearerAuthOptions"/></param>
@@ -617,6 +661,17 @@ public static class AuthenticationServiceExtensions
         Action<JwtBearerAuthOptions> configureOptions)
     {
         services.Configure(configureOptions);
+
+        // Idempotency guard: a second AddJwtBearer() registers the Bearer scheme twice,
+        // which throws "Scheme already exists: Bearer" at the first authentication
+        // resolve, and the plain AddScoped registration below would run the provider
+        // twice per request through the composite.
+        if (services.Any(d => d.ServiceType == typeof(PortaJwtAuthenticationMarker)))
+        {
+            return services;
+        }
+
+        services.AddSingleton<PortaJwtAuthenticationMarker>();
 
         services.AddAuthentication()
             .AddJwtBearer();
@@ -709,4 +764,28 @@ public static class AuthenticationServiceExtensions
 
         return services;
     }
+
+    /// <summary>
+    /// Marker registration recording that <see cref="AddPortaAuthenticationCore"/> has
+    /// already run, making repeated <c>AddPortaAuthentication</c> calls (including via
+    /// <c>AddPortaOidcAuth</c>) no-ops for service registration (options configuration
+    /// still composes).
+    /// </summary>
+    private sealed class PortaAuthenticationMarker;
+
+    /// <summary>
+    /// Marker registration recording that
+    /// <see cref="AddReferenceTokenAuthentication(IServiceCollection, Action{ReferenceTokenAuthOptions})"/>
+    /// has already run, making repeated calls no-ops for service registration
+    /// (options configuration still composes).
+    /// </summary>
+    private sealed class ReferenceTokenAuthenticationMarker;
+
+    /// <summary>
+    /// Marker registration recording that
+    /// <see cref="AddPortaJwtAuthentication(IServiceCollection, Action{JwtBearerAuthOptions})"/>
+    /// has already run, making repeated calls no-ops for service registration
+    /// (options configuration still composes).
+    /// </summary>
+    private sealed class PortaJwtAuthenticationMarker;
 }
