@@ -17,7 +17,6 @@ public class DataTypeContractTests
 
         Assert.Equal("GET", req.Method);
         Assert.Equal("https://api.example/resource", req.Url);
-        Assert.True(req.ForwardAccessToken);          // default true
         Assert.False(req.UseTokenExchange);           // default false
         Assert.Null(req.BackendAuthPolicy);
         Assert.Null(req.BackendName);

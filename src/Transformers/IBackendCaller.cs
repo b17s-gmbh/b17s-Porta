@@ -568,12 +568,6 @@ public record BackendRequest
     public Dictionary<string, string>? ContentHeaders { get; init; }
 
     /// <summary>
-    /// Whether to forward the access token to the backend.
-    /// Default: true
-    /// </summary>
-    public bool ForwardAccessToken { get; init; } = true;
-
-    /// <summary>
     /// The access token to forward (populated by the framework).
     /// </summary>
     public string? AccessToken { get; init; }

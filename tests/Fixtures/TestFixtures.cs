@@ -204,7 +204,6 @@ public static class TestFixtures
         string method = "POST",
         string url = "http://backend-service/api/test",
         string? backendAuthPolicy = BackendAuthPolicies.BasicAuth,
-        bool forwardAccessToken = true,
         string? accessToken = null,
         TimeSpan? timeout = null)
     {
@@ -213,7 +212,6 @@ public static class TestFixtures
             Method = method,
             Url = url,
             BackendAuthPolicy = backendAuthPolicy,
-            ForwardAccessToken = forwardAccessToken,
             AccessToken = accessToken,
             Timeout = timeout
         };
