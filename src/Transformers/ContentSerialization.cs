@@ -130,13 +130,15 @@ public sealed class ContentSerializer : IContentSerializer
 
     // Modern .NET defaults already disable DTD processing and external resolution, but pin
     // them explicitly: this file deserializes XML from untrusted backend responses, and a
-    // future framework default change must not silently re-enable XXE.
+    // future framework default change must not silently re-enable XXE. The entity-expansion
+    // cap is pinned to the framework default of 10M characters (0 would mean *unlimited*).
+    // No document-size cap is set: response bodies are already capped before they reach
+    // the reader.
     private static readonly XmlReaderSettings XmlReaderSettings = new()
     {
         DtdProcessing = DtdProcessing.Prohibit,
         XmlResolver = null,
-        MaxCharactersFromEntities = 0,
-        MaxCharactersInDocument = 0
+        MaxCharactersFromEntities = 10_000_000
     };
 
     /// <inheritdoc/>

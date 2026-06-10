@@ -51,13 +51,14 @@ internal static class LogRedaction
     /// <summary>
     /// Returns a stable, non-reversible <c>{category}:{sha256-prefix}</c> token for use as a
     /// refresh-lock partition key. The hash is deterministic, so the same identifier maps to the
-    /// same lock across replicas and connections (preserving the single-flight refresh guarantee),
-    /// while keeping the raw identifier out of both the lock-timeout log line and the distributed
-    /// cache keyspace. On the session-id fallback paths the identifier is credential-equivalent;
-    /// on the <c>sub</c> path it is PII - per <c>SECURITY.md</c> neither should be persisted
-    /// verbatim into a shared cache keyspace or emitted raw to the log stream. The <paramref name="category"/>
-    /// (e.g. <c>user</c>, <c>bff-session</c>) is preserved in the clear so operators can still tell
-    /// which identifier path produced the lock.
+    /// same lock across replicas and connections (preserving the single-flight refresh guarantee).
+    /// Hashing matters because the lock key is emitted verbatim in the lock-timeout log line: on
+    /// the session-id fallback paths the identifier is credential-equivalent and per
+    /// <c>SECURITY.md</c> must never reach the log stream. (The session email/subject index keys,
+    /// by contrast, carry the raw identifier and do get logged - email and <c>sub</c> are PII,
+    /// not Secrets, and are logged raw by design; see <see cref="FingerprintEmail"/>.) The
+    /// <paramref name="category"/> (e.g. <c>user</c>, <c>bff-session</c>) is preserved in the
+    /// clear so operators can still tell which identifier path produced the lock.
     /// </summary>
     public static string FingerprintLockComponent(string category, string? value)
         => Fingerprint(category, value);

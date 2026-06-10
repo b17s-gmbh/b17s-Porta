@@ -534,7 +534,8 @@ public sealed class SessionManagementService(
             if (!handle.Acquired)
             {
                 // Best-effort fallback: skip the atomic update rather than risk a lost-update
-                // race. Caller already logged a register-session failure-context elsewhere.
+                // race. The session itself stays valid - it just won't be discoverable via the
+                // email index - and this log line is the only record of that gap.
                 logger.IndexLockTimedOut(indexKey);
                 return;
             }

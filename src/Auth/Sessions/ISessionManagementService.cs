@@ -48,13 +48,14 @@ public interface ISessionManagementService
     Task<IReadOnlyList<SessionInfo>> GetSessionsByEmailAsync(string email, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Terminates a specific session by ID
+    /// Terminates a specific session by ID. Termination is idempotent best-effort:
+    /// terminating an already-terminated, expired, or never-existing id is not an error.
     /// </summary>
     /// <param name="sessionId">The session identifier</param>
     /// <param name="revokeTokens">Whether to revoke tokens at IdP (best effort)</param>
     /// <param name="cancellationToken">Token to abort the operation when the caller disconnects.</param>
     /// <param name="reason">Low-cardinality cause recorded on the <c>bff.session.invalidated</c> metric's <c>reason</c> tag (e.g. <c>logout</c>, <c>backchannel</c>, <c>admin</c>).</param>
-    /// <returns>True if session was terminated successfully</returns>
+    /// <returns>True when the teardown pass completed - including for ids with no live session; false on invalid input or when teardown failed.</returns>
     Task<bool> TerminateSessionAsync(string sessionId, bool revokeTokens = true, CancellationToken cancellationToken = default, string reason = "unspecified");
 
     /// <summary>

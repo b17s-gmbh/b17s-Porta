@@ -42,10 +42,10 @@ internal static class RouteUrlInterpolator
             // single-segment (slashes encoded). Catch-all forms are checked first because the
             // bare form would not match them anyway, and we want their slash-preserving encoding.
             //
-            // Case-sensitive: ASP.NET Core route parameter names are case-sensitive when bound
-            // from RouteData, and a case-insensitive replace would swap every visual variant
-            // (`{Id}`, `{ID}`, `{iD}`) with the same value, which is surprising to anyone
-            // relying on routing to keep them distinct.
+            // Case-insensitive, matching routing semantics: RouteValueDictionary keys are
+            // OrdinalIgnoreCase, so routing itself cannot keep `{Id}` and `{id}` distinct - a
+            // case-sensitive replace here would just leave a casing mismatch between the route
+            // pattern and the backend template as a literal `{Id}` forwarded to the backend.
             url = ReplacePlaceholder(url, $"{{**{key}}}", raw, catchAll: true);
             url = ReplacePlaceholder(url, $"{{*{key}}}", raw, catchAll: true);
             url = ReplacePlaceholder(url, $"{{{key}}}", raw, catchAll: false);
@@ -86,13 +86,13 @@ internal static class RouteUrlInterpolator
 
     private static string ReplacePlaceholder(string url, string placeholder, string? value, bool catchAll)
     {
-        if (!url.Contains(placeholder, StringComparison.Ordinal))
+        if (!url.Contains(placeholder, StringComparison.OrdinalIgnoreCase))
         {
             return url;
         }
 
         var encoded = EncodeRouteValue(value, catchAll);
-        return url.Replace(placeholder, encoded, StringComparison.Ordinal);
+        return url.Replace(placeholder, encoded, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string EncodeRouteValue(string? value, bool catchAll)

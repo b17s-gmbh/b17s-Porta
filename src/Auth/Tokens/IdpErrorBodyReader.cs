@@ -21,7 +21,9 @@ internal static class IdpErrorBodyReader
     /// <remarks>
     /// The cap is enforced in <em>bytes</em>, not characters: at most
     /// <see cref="PortaCoreOptions.IdpErrorBodyMaxBytes"/> bytes are pulled off the response
-    /// stream, so a hostile or oversized body is never buffered in full. The capped bytes are
+    /// stream. The cap bounds what can reach failure-result strings and log sinks - it is
+    /// <em>not</em> a memory bound: callers use buffered sends, so HttpClient has already
+    /// materialized the full response body by the time this runs. The capped bytes are
     /// decoded as UTF-8 (the OAuth/OIDC error wire format); a byte-boundary cut that splits a
     /// trailing multi-byte sequence is rendered as a Unicode replacement character rather than
     /// throwing.

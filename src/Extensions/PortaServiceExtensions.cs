@@ -147,11 +147,12 @@ public static class PortaServiceExtensions
             client.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
         })
-        // Auto-redirect is disabled: TrustedHostValidator runs only at startup against
-        // the configured UrlTemplate. A backend returning `302 Location: https://attacker/...`
-        // would otherwise cause the client to follow without re-validating, leaking any
-        // custom headers added by IBackendAuthHandler (X-Api-Key, HMAC signatures, etc.) -
-        // .NET only strips Authorization on cross-origin redirects.
+        // Auto-redirect is disabled: TrustedHostValidator gates the *request* URL (at startup
+        // against the configured UrlTemplate, and again at request time before a user token is
+        // attached), but a redirect target is never re-validated. A backend returning
+        // `302 Location: https://attacker/...` would otherwise cause the client to follow,
+        // leaking any custom headers added by IBackendAuthHandler (X-Api-Key, HMAC signatures,
+        // etc.) - .NET only strips Authorization on cross-origin redirects.
         .ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -223,7 +224,8 @@ public static class PortaServiceExtensions
         // TryAdd so a consumer can still override the default registration if desired.
         services.TryAddTransient<DefaultRawForwardTransformer>();
 
-        // Register trusted host validator for WithUserToken() validation at startup
+        // Register trusted host validator: WithUserToken() validation at startup, plus the
+        // request-time gate in BackendCaller before a user token is forwarded.
         services.AddSingleton<ITrustedHostValidator, TrustedHostValidator>();
 
         // Register the matcher policy for When() predicate-based conditional routing

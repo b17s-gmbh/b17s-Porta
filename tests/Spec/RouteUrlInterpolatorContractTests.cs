@@ -24,6 +24,17 @@ public class RouteUrlInterpolatorContractTests
     }
 
     [Fact]
+    public void Substitutes_CaseInsensitively_MatchingRouteValueDictionarySemantics()
+    {
+        // RouteValueDictionary keys are OrdinalIgnoreCase, so routing cannot keep {Id} and
+        // {id} distinct. A casing mismatch between the route pattern and the backend template
+        // must still substitute - not forward the literal placeholder to the backend.
+        var result = Interpolate("https://api.internal/users/{Id}", ("id", "42"));
+
+        Assert.Equal("https://api.internal/users/42", result);
+    }
+
+    [Fact]
     public void UrlEncodes_SpecialCharacters()
     {
         // A space must be percent-encoded, not left raw, and must stay within the path.

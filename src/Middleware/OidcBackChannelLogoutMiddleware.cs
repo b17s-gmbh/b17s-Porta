@@ -70,7 +70,7 @@ public sealed class OidcBackChannelLogoutMiddleware(
         }
 
         // Back-channel logout must be POST
-        if (context.Request.Method != "POST")
+        if (!HttpMethods.IsPost(context.Request.Method))
         {
             logger.InvalidHttpMethod(context.Request.Method);
             context.Response.StatusCode = 405;
@@ -190,8 +190,9 @@ public sealed class OidcBackChannelLogoutMiddleware(
             // Mark the jti as consumed for the remaining lifetime of the token plus
             // the configured clock skew, so a token cannot be replayed within its
             // accepted-validity window even on a different node. Clamp the TTL: a
-            // misconfigured IdP could mint a token with no `exp` (DateTime.MaxValue),
-            // which would otherwise pin the jti in cache indefinitely.
+            // misconfigured IdP could mint a token with a far-future `exp` (a missing
+            // `exp` is already rejected by lifetime validation), which would otherwise
+            // pin the jti in cache for that long.
             var ttl = (validatedToken.ValidTo - _timeProvider.GetUtcNow().UtcDateTime) + options.ClockSkew;
             if (ttl > options.MaxReplayCacheTtl)
             {
