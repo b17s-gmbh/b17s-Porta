@@ -113,7 +113,9 @@ jobs:
           dotnet test tests/b17s.Porta.Tests.csproj
           --configuration Release
           --no-build
-          --logger "trx;LogFileName=test-results.trx"
+          --
+          --report-xunit-trx
+          --report-xunit-trx-filename test-results.trx
 
       - name: Upload test results
         if: always()

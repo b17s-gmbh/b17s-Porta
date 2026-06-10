@@ -93,7 +93,7 @@ builder.Services.AddPortaCore(builder.Configuration);
     "MaxBackendResponseBytes": 10485760,
     "MaxRawForwardResponseBytes": 104857600,
     "RawForwardReadIdleTimeout": "00:00:30",
-    "TokenRefreshSkew": "00:00:60",
+    "TokenRefreshSkew": "00:01:00",
     "LogIdpErrorBodies": false,
     "IdpErrorBodyMaxBytes": 512
   }

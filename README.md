@@ -56,6 +56,7 @@ builder.Services.AddPortaCore(options => {
 });
 
 builder.Services.AddPortaAuthentication(builder.Configuration);
+builder.Services.AddTransformer<UserProfileTransformer>();
 
 var app = builder.Build();
 
