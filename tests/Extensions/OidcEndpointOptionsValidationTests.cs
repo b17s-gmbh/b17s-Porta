@@ -193,6 +193,43 @@ public class OidcEndpointOptionsValidationTests
     }
 
     [Fact]
+    public void UseOidcBackChannelLogout_ValidateSignatureFalse_NoHostEnvironment_FailsClosed()
+    {
+        // L18 regression: a bare-container host without a registered IHostEnvironment
+        // must be treated as production - the hardening check fails closed, not open.
+        var app = BuildApp();
+
+        var ex = Assert.Throws<OptionsValidationException>(() =>
+            app.UseOidcBackChannelLogout(configureOptions: o => o.ValidateSignature = false));
+
+        Assert.Contains("ValidateSignature", ex.Message);
+    }
+
+    [Fact]
+    public void UseOidcBackChannelLogout_DefaultOptions_NoHostEnvironment_Succeeds()
+    {
+        // Fail-closed only bites when validation is actually disabled - secure
+        // defaults must keep working in hosts without IHostEnvironment.
+        var app = BuildApp();
+
+        app.UseOidcBackChannelLogout();
+    }
+
+    [Fact]
+    public void UseOidcLogin_WithoutAddOidcEndpoints_ThrowsFriendlyGuard()
+    {
+        // Without the guard this surfaced as an opaque "Unable to resolve service
+        // for type 'IReturnUrlProtector'" at pipeline build time.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        var app = new ApplicationBuilder(services.BuildServiceProvider());
+
+        var ex = Assert.Throws<InvalidOperationException>(() => app.UseOidcLogin());
+
+        Assert.Contains("AddOidcEndpoints", ex.Message);
+    }
+
+    [Fact]
     public void UseOidcBackChannelLogout_AllValidationDisabled_FailsWithCombinedMessage()
     {
         var app = BuildAppWithEnvironment("Production");

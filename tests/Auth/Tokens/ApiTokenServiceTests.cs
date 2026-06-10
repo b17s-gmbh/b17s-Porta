@@ -5,6 +5,7 @@ using b17s.Porta.Auth.Discovery;
 using b17s.Porta.Auth.Sessions;
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Tests.Fixtures;
 
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -58,7 +59,7 @@ public class ApiTokenServiceTests
             new SingleClientFactory(new HttpClient(capture)),
             new UnusedDiscoveryService(),
             Microsoft.Extensions.Options.Options.Create(new SessionAuthenticationConfiguration()),
-            Microsoft.Extensions.Options.Options.Create(new PortaCoreOptions()),
+            new StaticOptionsMonitor<PortaCoreOptions>(new PortaCoreOptions()),
             NullLogger<TokenRefreshService>.Instance);
 
         var sut = new ApiTokenService(

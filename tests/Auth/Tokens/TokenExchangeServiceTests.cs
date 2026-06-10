@@ -5,6 +5,7 @@ using System.Text.Json;
 
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Tests.Fixtures;
 
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -421,7 +422,7 @@ public sealed class TokenExchangeServiceTests
         var factory = new SingleClientFactory(new HttpClient(handler));
         return new TokenExchangeService(
             factory,
-            Options.Create(core ?? new PortaCoreOptions()),
+            new StaticOptionsMonitor<PortaCoreOptions>(core ?? new PortaCoreOptions()),
             NullLogger<TokenExchangeService>.Instance);
     }
 

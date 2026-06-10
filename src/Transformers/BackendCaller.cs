@@ -685,27 +685,30 @@ public sealed class BackendCaller(
     private (int StatusCode, string Message, BackendErrorType ErrorType) MapSendFailure(SendResult sendResult, BackendRequest request)
     {
         var (mappedStatus, mappedMessage) = _errorMapper.MapError(sendResult.StatusCode, sendResult.Error, request);
-        if (mappedStatus == sendResult.StatusCode)
-        {
-            // Mapper passed the status through (default for everything but 401/403): keep the
-            // original, more specific error type (Timeout, NetworkError, ConfigurationError, ...).
-            return (mappedStatus, mappedMessage, sendResult.ErrorType);
-        }
-
-        // The mapper rewrote the status (default: auth-stage 401 -> 502). Recompute the error
-        // type from the mapped status - matching MapHttpErrorToResult - so downstream conversions
-        // that key on ErrorType (e.g. GraphQLResult.ToBackendResult turns AuthenticationError back
-        // into a 401) cannot resurrect the unmapped status.
-        var errorType = mappedStatus switch
-        {
-            401 => BackendErrorType.AuthenticationError,
-            403 => BackendErrorType.AuthorizationError,
-            >= 400 and < 500 => BackendErrorType.ClientError,
-            >= 500 => BackendErrorType.ServerError,
-            _ => BackendErrorType.Unknown
-        };
-        return (mappedStatus, mappedMessage, errorType);
+        // The mapped status is the client-visible code; the error type keeps describing what
+        // actually went wrong (AuthenticationError, Timeout, NetworkError, ConfigurationError, ...)
+        // so callers can branch on the real cause even when the default mapper neutralizes an
+        // auth-stage 401 to 502. No downstream conversion derives a status from the error type
+        // (GraphQLResult.ToBackendResult surfaces MappedStatusCode for exactly that reason), so
+        // keeping the unmapped type cannot resurrect a neutralized status.
+        return (mappedStatus, mappedMessage, sendResult.ErrorType);
     }
+
+    /// <summary>
+    /// Classifies the ORIGINAL backend status - before the <see cref="IBackendErrorMapper"/>
+    /// rewrites it - so <see cref="BackendErrorType"/> keeps describing what the backend actually
+    /// did: a real backend 401 stays <see cref="BackendErrorType.AuthenticationError"/> even when
+    /// the default mapper surfaces it as 502, and a mapped 502 can't masquerade as a backend
+    /// <see cref="BackendErrorType.ServerError"/>.
+    /// </summary>
+    private static BackendErrorType ClassifyBackendStatus(int statusCode) => statusCode switch
+    {
+        401 => BackendErrorType.AuthenticationError,
+        403 => BackendErrorType.AuthorizationError,
+        >= 400 and < 500 => BackendErrorType.ClientError,
+        >= 500 => BackendErrorType.ServerError,
+        _ => BackendErrorType.Unknown
+    };
 
     private BackendResult MapHttpErrorToResult(HttpResponseMessage response, BackendRequest request)
     {
@@ -715,23 +718,10 @@ public sealed class BackendCaller(
         // Run the configured IBackendErrorMapper first. The default maps backend 401/403 to
         // 502 Bad Gateway so the client UI doesn't sign the user out when *backend* credentials
         // are wrong (vs. *user* credentials being wrong). Custom mappers can override per route.
+        // The error type is classified from the ORIGINAL status so it keeps naming the real
+        // failure (a remapped backend 401 stays AuthenticationError, surfaced as 502).
         var (mappedStatus, mappedMessage) = _errorMapper.MapError(statusCode, error, request);
-
-        var errorType = mappedStatus switch
-        {
-            401 => BackendErrorType.AuthenticationError,
-            403 => BackendErrorType.AuthorizationError,
-            >= 400 and < 500 => BackendErrorType.ClientError,
-            >= 500 => BackendErrorType.ServerError,
-            _ => BackendErrorType.Unknown
-        };
-
-        return mappedStatus switch
-        {
-            401 => BackendResult.AuthenticationFailure(mappedMessage),
-            403 => BackendResult.AuthorizationFailure(mappedMessage),
-            _ => BackendResult.Failure(mappedStatus, mappedMessage, errorType)
-        };
+        return BackendResult.Failure(mappedStatus, mappedMessage, ClassifyBackendStatus(statusCode));
     }
 
     private GraphQLResult<TResponse> MapHttpErrorToGraphQLResult<TResponse>(int statusCode, string? reasonPhrase, BackendRequest request)
@@ -740,19 +730,11 @@ public sealed class BackendCaller(
 
         // Same mapping the typed paths use (see MapHttpErrorToResult / DeserializeResponseAsync):
         // the default IBackendErrorMapper maps backend 401/403 to 502 so a *backend* credential
-        // failure doesn't surface as a 401 and sign the user out.
+        // failure doesn't surface as a 401 and sign the user out. The error type is classified
+        // from the ORIGINAL status; ToBackendResult surfaces MappedStatusCode (never a status
+        // derived from the error type), so the unmapped 401 cannot resurface client-side.
         var (mappedStatus, mappedMessage) = _errorMapper.MapError(statusCode, error, request);
-
-        var errorType = mappedStatus switch
-        {
-            401 => BackendErrorType.AuthenticationError,
-            403 => BackendErrorType.AuthorizationError,
-            >= 400 and < 500 => BackendErrorType.ClientError,
-            >= 500 => BackendErrorType.ServerError,
-            _ => BackendErrorType.Unknown
-        };
-
-        return GraphQLResult<TResponse>.FromBackendError(mappedStatus, mappedMessage, errorType);
+        return GraphQLResult<TResponse>.FromBackendError(mappedStatus, mappedMessage, ClassifyBackendStatus(statusCode));
     }
 
     private async Task<SendResult> SendRequestAsync<TRequest>(
@@ -1113,15 +1095,9 @@ public sealed class BackendCaller(
 
             // Defer to the configured IBackendErrorMapper for 401/403 -> 502 (or whatever
             // policy the consumer registered). This keeps every non-success path consistent.
+            // The error type is classified from the ORIGINAL status (see ClassifyBackendStatus).
             var (mappedStatus, mappedMessage) = _errorMapper.MapError(statusCode, error, request);
-            return mappedStatus switch
-            {
-                401 => BackendResult<TResponse>.AuthenticationFailure(mappedMessage),
-                403 => BackendResult<TResponse>.AuthorizationFailure(mappedMessage),
-                >= 400 and < 500 => BackendResult<TResponse>.Failure(mappedStatus, mappedMessage, BackendErrorType.ClientError),
-                >= 500 => BackendResult<TResponse>.Failure(mappedStatus, mappedMessage, BackendErrorType.ServerError),
-                _ => BackendResult<TResponse>.Failure(mappedStatus, mappedMessage)
-            };
+            return BackendResult<TResponse>.Failure(mappedStatus, mappedMessage, ClassifyBackendStatus(statusCode));
         }
 
         var content = await ReadBoundedResponseStringAsync(response, cancellationToken);
@@ -1186,14 +1162,7 @@ public sealed class BackendCaller(
             }
 
             var (mappedStatus, mappedMessage) = _errorMapper.MapError(statusCode, error, request);
-            return mappedStatus switch
-            {
-                401 => BackendObjectResult.Failure(mappedStatus, mappedMessage, BackendErrorType.AuthenticationError),
-                403 => BackendObjectResult.Failure(mappedStatus, mappedMessage, BackendErrorType.AuthorizationError),
-                >= 400 and < 500 => BackendObjectResult.Failure(mappedStatus, mappedMessage, BackendErrorType.ClientError),
-                >= 500 => BackendObjectResult.Failure(mappedStatus, mappedMessage, BackendErrorType.ServerError),
-                _ => BackendObjectResult.Failure(mappedStatus, mappedMessage)
-            };
+            return BackendObjectResult.Failure(mappedStatus, mappedMessage, ClassifyBackendStatus(statusCode));
         }
 
         var content = await ReadBoundedResponseStringAsync(response, cancellationToken);

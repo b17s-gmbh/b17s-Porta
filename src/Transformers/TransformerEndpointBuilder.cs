@@ -28,7 +28,6 @@ namespace b17s.Porta.Transformers;
 public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : BffEndpointBuilderBase<TBuilder>
     where TBuilder : TransformerEndpointBuilderBase<TTransformer, TBuilder>
 {
-    private bool _allowOptionalAuth;
     private bool _useTokenExchange;
     private string? _tokenExchangeAudience;
     private bool _enableRetries;
@@ -135,11 +134,15 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
     /// <summary>
     /// Allows anonymous access but still attempts to populate authentication context if credentials are present.
     /// </summary>
+    /// <remarks>
+    /// Equivalent to <see cref="BffEndpointBuilderBase{TBuilder}.AllowAnonymous"/>: every endpoint
+    /// that does not require authentication resolves the auth context optionally, so present
+    /// credentials still populate <see cref="TransformerContext.AuthContext"/>.
+    /// </remarks>
     public TBuilder AllowAnonymousWithOptionalAuth()
     {
         _requireAuth = false;
         _authPolicy = null;
-        _allowOptionalAuth = true;
         return Self;
     }
 
@@ -318,7 +321,6 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
         var transformerName = typeof(TTransformer).Name;
         var routePattern = _routePattern;
         var httpMethod = _httpMethod;
-        var allowOptionalAuth = _allowOptionalAuth;
         var backendMethod = _backendMethod;
         var backendUrl = _backendUrl;
         var timeout = _timeout;
@@ -379,8 +381,12 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
 
             try
             {
+                // Optional resolution whenever the endpoint doesn't enforce identity (matching
+                // RawForwardEndpointBuilder): an anonymous hit on an AllowAnonymous endpoint is
+                // deliberate - not an auth failure to count - and a throwing provider degrades
+                // to anonymous instead of failing the request with a 500.
                 var authContext = await AuthInstrumentation.ResolveAsync(
-                    authProvider, context, allowOptionalAuth, metrics, enableTelemetry);
+                    authProvider, context, allowOptional: !enforceUserIdentity, metrics, enableTelemetry);
 
                 var transformerContext = new TransformerContext
                 {

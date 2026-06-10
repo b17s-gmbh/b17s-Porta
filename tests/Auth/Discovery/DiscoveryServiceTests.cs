@@ -266,6 +266,51 @@ public sealed class DiscoveryServiceTests
         Assert.Equal("https://idp.test", cached!.Issuer);
     }
 
+    [Fact]
+    public async Task GetConfigurationAsync_ResolvesFreshClientFromFactoryPerFetch()
+    {
+        // Regression (L11): the per-authority ConfigurationManager lives for the process
+        // lifetime. Pinning the HttpClient created when the manager was built would defeat
+        // the factory's handler rotation (DNS refresh, connection recycling) for that
+        // authority forever, so every document fetch must resolve a fresh client. Discovery
+        // performs two fetches (metadata + JWKS); each must have asked the factory.
+        var handler = new RecordingHandler(_ => DiscoveryDocument(issuer: "https://idp.test"));
+        var factory = new CountingClientFactory(handler);
+        var monitor = new StaticOptionsMonitor<SessionAuthenticationConfiguration>(
+            new SessionAuthenticationConfiguration { RequireHttpsMetadata = false });
+        var sut = new DiscoveryService(factory, monitor, NullLogger<DiscoveryService>.Instance);
+
+        await sut.GetConfigurationAsync("https://idp.test", TestContext.Current.CancellationToken);
+
+        Assert.True(handler.Calls >= 2, "discovery flow should fetch metadata and JWKS");
+        Assert.Equal(handler.Calls, factory.CreateClientCalls);
+    }
+
+    [Fact]
+    public async Task FactoryDocumentRetriever_ReadsRequireHttpsMetadataPerFetch()
+    {
+        // Regression (L11): RequireHttps used to be snapshotted into the manager's retriever
+        // when the manager was first created, so flipping RequireHttpsMetadata via the options
+        // monitor required a process restart to take effect.
+        var handler = new RecordingHandler(_ => DiscoveryDocument(issuer: "http://idp.test"));
+        var factory = new SingleClientFactory(new HttpClient(handler));
+        var monitor = new MutableOptionsMonitor<SessionAuthenticationConfiguration>(
+            new SessionAuthenticationConfiguration { RequireHttpsMetadata = true });
+        var retriever = new DiscoveryService.FactoryDocumentRetriever(factory, monitor);
+        const string metadataUrl = "http://idp.test/.well-known/openid-configuration";
+
+        // RequireHttps=true: blocked before any HTTP traffic.
+        await Assert.ThrowsAnyAsync<ArgumentException>(
+            () => retriever.GetDocumentAsync(metadataUrl, TestContext.Current.CancellationToken));
+        Assert.Equal(0, handler.Calls);
+
+        monitor.Value = new SessionAuthenticationConfiguration { RequireHttpsMetadata = false };
+
+        var document = await retriever.GetDocumentAsync(metadataUrl, TestContext.Current.CancellationToken);
+        Assert.Contains("http://idp.test", document);
+        Assert.Equal(1, handler.Calls);
+    }
+
     private static HttpResponseMessage DiscoveryDocument(string issuer = "https://idp.test")
     {
         var json = $$"""
@@ -315,10 +360,29 @@ public sealed class DiscoveryServiceTests
         public HttpClient CreateClient(string name) => client;
     }
 
+    private sealed class CountingClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public int CreateClientCalls { get; private set; }
+
+        public HttpClient CreateClient(string name)
+        {
+            CreateClientCalls++;
+            return new HttpClient(handler, disposeHandler: false);
+        }
+    }
+
     private sealed class StaticOptionsMonitor<T>(T value) : Microsoft.Extensions.Options.IOptionsMonitor<T>
     {
         public T CurrentValue => value;
         public T Get(string? name) => value;
+        public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
+
+    private sealed class MutableOptionsMonitor<T>(T value) : Microsoft.Extensions.Options.IOptionsMonitor<T>
+    {
+        public T Value { get; set; } = value;
+        public T CurrentValue => Value;
+        public T Get(string? name) => Value;
         public IDisposable? OnChange(Action<T, string?> listener) => null;
     }
 

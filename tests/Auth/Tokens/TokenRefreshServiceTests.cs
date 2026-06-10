@@ -5,6 +5,7 @@ using System.Text;
 using b17s.Porta.Auth.Discovery;
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Tests.Fixtures;
 
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -325,7 +326,7 @@ public sealed class TokenRefreshServiceTests
             factory,
             discovery ?? new StubDiscoveryService(null),
             Options.Create(config ?? new SessionAuthenticationConfiguration()),
-            Options.Create(core ?? new PortaCoreOptions()),
+            new StaticOptionsMonitor<PortaCoreOptions>(core ?? new PortaCoreOptions()),
             NullLogger<TokenRefreshService>.Instance);
     }
 

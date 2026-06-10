@@ -200,19 +200,18 @@ public readonly struct GraphQLResult<T>
     /// Converts this GraphQL result to a standard BackendResult.
     /// Uses MappedStatusCode for proper HTTP status mapping.
     /// </summary>
+    /// <remarks>
+    /// The status always comes from <see cref="MappedStatusCode"/> - never re-derived from
+    /// <see cref="ErrorType"/>. The error type describes the actual backend failure, so deriving
+    /// 401 from <see cref="BackendErrorType.AuthenticationError"/> would resurrect a status the
+    /// <see cref="IBackendErrorMapper"/> deliberately neutralized (default: backend 401 -> 502).
+    /// </remarks>
     public BackendResult<T> ToBackendResult()
     {
         if (IsSuccess)
             return BackendResult<T>.Success(Data!, MappedStatusCode);
 
-        return ErrorType switch
-        {
-            BackendErrorType.AuthenticationError => BackendResult<T>.AuthenticationFailure(Error!),
-            BackendErrorType.AuthorizationError => BackendResult<T>.AuthorizationFailure(Error!),
-            BackendErrorType.NetworkError => BackendResult<T>.NetworkFailure(Error!),
-            BackendErrorType.Timeout => BackendResult<T>.TimeoutFailure(Error!),
-            _ => BackendResult<T>.Failure(MappedStatusCode, Error!, ErrorType)
-        };
+        return BackendResult<T>.Failure(MappedStatusCode, Error!, ErrorType);
     }
 
     /// <summary>

@@ -42,6 +42,31 @@ public class TrustedHostValidatorTests
         Assert.Contains("placeholder", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("https://api.example.com?filter={expr}")]
+    [InlineData("https://api.example.com#section-{anchor}")]
+    public void ValidateUrl_PathlessUrl_PlaceholderInQueryOrFragment_Passes(string url)
+    {
+        // Regression (L13): the authority scan used to run to the first '/' or end of string,
+        // so a path-less URL carrying a placeholder in its query or fragment was mis-flagged
+        // as an authority placeholder and failed startup with a misleading error.
+        var validator = Build("https://api.example.com");
+
+        validator.ValidateUrl(url, "ep");
+    }
+
+    [Theory]
+    [InlineData("https://api.example.com:{port}?x=1")]
+    [InlineData("https://{tenant}.example.com?x=1")]
+    public void ValidateUrl_PlaceholderInAuthority_PathlessWithQuery_StillThrows(string url)
+    {
+        // The '?' boundary must not let a genuine authority placeholder slip through.
+        var validator = Build("*");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => validator.ValidateUrl(url, "ep"));
+        Assert.Contains("placeholder", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void ValidateUrl_PlaceholderInAuthority_ThrowsEvenIfLiteralSubstringMatchesPattern()
     {

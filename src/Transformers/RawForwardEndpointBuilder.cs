@@ -347,6 +347,9 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 // headers collection silently rejects them, so they must be lifted onto the forwarded
                 // StreamContent instead of being dropped (Content-Encoding, Content-Disposition, ...).
                 var contentHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                // Tracks exactly which headers (and values) were copied from the client so the
+                // post-rewrite re-scope below can distinguish them from transformer-set headers.
+                var clientForwardedHeaders = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
                 foreach (var (key, value) in transformerContext.RequestHeaders)
                 {
                     if (!ShouldForwardClientHeader(key, destinationHost, remoteIp, headerPassThrough))
@@ -365,7 +368,11 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                         continue;
                     }
 
-                    tempRequest.Headers.TryAddWithoutValidation(key, [.. value]);
+                    var clientValues = value.ToArray();
+                    if (tempRequest.Headers.TryAddWithoutValidation(key, clientValues))
+                    {
+                        clientForwardedHeaders[key] = clientValues!;
+                    }
                 }
 
                 // Let transformer modify request
@@ -383,16 +390,23 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                 // rewrite must not be allowed to smuggle the client's Authorization/Cookie/etc. to a
                 // host the operator never allow-listed for those headers, so re-scope the client
                 // headers against the final host and strip any that are no longer permitted. Headers
-                // the transformer set itself are trusted server-side intent; we only re-evaluate
-                // headers that were forwarded from the incoming client request.
+                // the transformer set or replaced in ModifyRequest are trusted server-side intent
+                // and are kept: only headers still carrying the exact values copied from the client
+                // are re-evaluated (compared against the snapshot taken before ModifyRequest ran).
                 // (User-token forwarding is independently re-validated against the final URL in
                 // BackendCaller's trusted-host gate, so a rewrite cannot leak the OAuth token either.)
                 string? finalHost = Uri.TryCreate(finalUrl, UriKind.Absolute, out var finalUri) ? finalUri.Host : null;
                 if (!string.Equals(finalHost, destinationHost, StringComparison.OrdinalIgnoreCase))
                 {
-                    foreach (var (key, _) in transformerContext.RequestHeaders)
+                    foreach (var (key, clientValues) in clientForwardedHeaders)
                     {
-                        if (tempRequest.Headers.Contains(key) && !ShouldForwardClientHeader(key, finalHost, remoteIp, headerPassThrough))
+                        if (ShouldForwardClientHeader(key, finalHost, remoteIp, headerPassThrough))
+                        {
+                            continue;
+                        }
+
+                        if (tempRequest.Headers.TryGetValues(key, out var currentValues)
+                            && currentValues.SequenceEqual(clientValues, StringComparer.Ordinal))
                         {
                             tempRequest.Headers.Remove(key);
                         }

@@ -18,7 +18,7 @@ public sealed class TokenRefreshService(
     IHttpClientFactory httpClientFactory,
     IDiscoveryService discoveryService,
     IOptions<SessionAuthenticationConfiguration> configOptions,
-    IOptions<PortaCoreOptions> coreOptions,
+    IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor,
     ILogger<TokenRefreshService> logger) : ITokenRefreshService
 {
     /// <summary>
@@ -28,7 +28,6 @@ public sealed class TokenRefreshService(
     public const string HttpClientName = AuthenticationServiceExtensions.TokenHttpClientName;
 
     private readonly SessionAuthenticationConfiguration config = configOptions.Value;
-    private readonly PortaCoreOptions _coreOptions = coreOptions.Value;
 
     /// <summary>
     /// Refreshes an access token using explicit provider-agnostic options.
@@ -83,7 +82,7 @@ public sealed class TokenRefreshService(
                 // The body is gated behind LogIdpErrorBodies - verbose IdPs echo the submitted
                 // refresh token / client secret back inside error JSON, and we must not let
                 // that hit log sinks by default.
-                var errorContent = await IdpErrorBodyReader.ReadSafeAsync(response, _coreOptions, cancellationToken);
+                var errorContent = await IdpErrorBodyReader.ReadSafeAsync(response, coreOptionsMonitor.CurrentValue, cancellationToken);
                 logger.RefreshFailed((int)response.StatusCode, errorContent);
 
                 return reason == RefreshFailureReason.InvalidGrant

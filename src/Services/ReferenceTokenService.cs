@@ -20,14 +20,12 @@ public sealed class ReferenceTokenService(
     IDiscoveryService discoveryService,
     ILogger<ReferenceTokenService> logger,
     IOptionsMonitor<ReferenceTokenAuthOptions> optionsMonitor,
-    IOptions<PortaCoreOptions> coreOptions) : IReferenceTokenService
+    IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor) : IReferenceTokenService
 {
     /// <summary>
     /// Named HttpClient identifier for the introspection client.
     /// </summary>
     public const string HttpClientName = "ReferenceTokenIntrospection";
-
-    private readonly PortaCoreOptions _coreOptions = coreOptions.Value;
 
     /// <inheritdoc/>
     public async Task<ReferenceTokenIntrospectionResult?> IntrospectTokenAsync(string token, CancellationToken cancellationToken = default)
@@ -92,7 +90,10 @@ public sealed class ReferenceTokenService(
 
         if (!response.IsSuccessStatusCode)
         {
-            var errorContent = await IdpErrorBodyReader.ReadSafeAsync(response, _coreOptions, cancellationToken);
+            // Read CurrentValue per call: LogIdpErrorBodies is documented as a temporary
+            // debugging switch, so toggling it via appsettings.json reload must take effect
+            // without a process restart (this is a singleton service).
+            var errorContent = await IdpErrorBodyReader.ReadSafeAsync(response, coreOptionsMonitor.CurrentValue, cancellationToken);
             logger.IntrospectionFailed((int)response.StatusCode, errorContent);
             return null;
         }

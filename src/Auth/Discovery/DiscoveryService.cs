@@ -30,6 +30,7 @@ public sealed class DiscoveryService(
     private readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _managers = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastForcedRefresh = new();
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly FactoryDocumentRetriever _documentRetriever = new(httpClientFactory, configMonitor);
 
     /// <inheritdoc/>
     public async Task<OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
@@ -77,13 +78,9 @@ public sealed class DiscoveryService(
             // One-shot fetch awaited inline: ConfigurationManager.RequestRefresh only refreshes
             // on a background thread, but the caller needs the post-rollover keys *now*, for the
             // retry within the same request (back-channel logout gets a single delivery attempt).
-            var httpClient = httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName);
             var config = await OpenIdConnectConfigurationRetriever.GetAsync(
                 BuildMetadataAddress(authority),
-                new HttpDocumentRetriever(httpClient)
-                {
-                    RequireHttps = configMonitor.CurrentValue.RequireHttpsMetadata
-                },
+                _documentRetriever,
                 cancellationToken);
 
             // Drop the stale manager so every other consumer also sees post-rollover metadata
@@ -119,20 +116,37 @@ public sealed class DiscoveryService(
     {
         return _managers.GetOrAdd(authority, key =>
         {
-            var metadataAddress = BuildMetadataAddress(key);
-            var httpClient = httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName);
-
             var manager = new ConfigurationManager<OpenIdConnectConfiguration>(
-                metadataAddress,
+                BuildMetadataAddress(key),
                 new OpenIdConnectConfigurationRetriever(),
-                new HttpDocumentRetriever(httpClient)
-                {
-                    RequireHttps = configMonitor.CurrentValue.RequireHttpsMetadata
-                });
+                _documentRetriever);
 
             logger.DiscoveryManagerCreated(key);
             return manager;
         });
+    }
+
+    /// <summary>
+    /// Resolves a fresh <see cref="HttpClient"/> from the factory for every document fetch.
+    /// The <see cref="ConfigurationManager{T}"/> instances live for the process lifetime, so
+    /// pinning the client created at manager construction would defeat the factory's handler
+    /// rotation (DNS refresh, connection recycling) for that authority forever. Reading the
+    /// options monitor per fetch likewise lets a <c>RequireHttpsMetadata</c> change take
+    /// effect without a restart.
+    /// </summary>
+    internal sealed class FactoryDocumentRetriever(
+        IHttpClientFactory httpClientFactory,
+        IOptionsMonitor<SessionAuthenticationConfiguration> configMonitor) : IDocumentRetriever
+    {
+        public Task<string> GetDocumentAsync(string address, CancellationToken cancel)
+        {
+            var retriever = new HttpDocumentRetriever(
+                httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName))
+            {
+                RequireHttps = configMonitor.CurrentValue.RequireHttpsMetadata
+            };
+            return retriever.GetDocumentAsync(address, cancel);
+        }
     }
 }
 

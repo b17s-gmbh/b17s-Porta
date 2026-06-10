@@ -179,6 +179,53 @@ public sealed class ReferenceTokenServiceExtensionsTests
     }
 
     [Fact]
+    public void AddReferenceTokenService_Twice_DoesNotDuplicateServiceDescriptors()
+    {
+        // Calling more than one overload (e.g. the IConfiguration overload plus the
+        // delegate overload) must not stack duplicate IReferenceTokenService
+        // registrations or nest a second resilience handler on the named client.
+        var services = BaseServices();
+
+        services.AddReferenceTokenService();
+        services.AddReferenceTokenService();
+
+        Assert.Single(services, d => d.ServiceType == typeof(IReferenceTokenService));
+    }
+
+    [Fact]
+    public void AddReferenceTokenService_Twice_NamedClientConfiguredOnce()
+    {
+        var services = BaseServices();
+
+        services.AddReferenceTokenService();
+        services.AddReferenceTokenService();
+
+        // A duplicated registration accumulates the configure action on the named
+        // HttpClientFactoryOptions, doubling the Accept header (and nesting a second
+        // resilience handler via the same mechanism).
+        var client = services.BuildServiceProvider()
+            .GetRequiredService<IHttpClientFactory>()
+            .CreateClient(ReferenceTokenService.HttpClientName);
+
+        Assert.Single(client.DefaultRequestHeaders.Accept);
+    }
+
+    [Fact]
+    public void AddReferenceTokenService_Twice_LaterConfigureOptionsStillComposes()
+    {
+        // The guard skips re-registration only; options configuration from repeated
+        // calls must still flow through the options pipeline.
+        var sp = BaseServices()
+            .AddReferenceTokenService(configureOptions: o => o.Authority = "https://idp.first")
+            .AddReferenceTokenService(configureOptions: o => o.ClientId = "second-client")
+            .BuildServiceProvider();
+
+        var opts = sp.GetRequiredService<IOptionsMonitor<ReferenceTokenAuthOptions>>().CurrentValue;
+        Assert.Equal("https://idp.first", opts.Authority);
+        Assert.Equal("second-client", opts.ClientId);
+    }
+
+    [Fact]
     public void AddReferenceTokenService_HttpClientName_MatchesRegisteredConstant()
     {
         // Compile-time alias check: the registration uses the constant, so if a

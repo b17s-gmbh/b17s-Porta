@@ -18,11 +18,10 @@ public sealed class TokenRevocationService(
     IHttpClientFactory httpClientFactory,
     IDiscoveryService discoveryService,
     IOptions<SessionAuthenticationConfiguration> configOptions,
-    IOptions<PortaCoreOptions> coreOptions,
+    IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor,
     ILogger<TokenRevocationService> logger) : ITokenRevocationService
 {
     private readonly SessionAuthenticationConfiguration config = configOptions.Value;
-    private readonly PortaCoreOptions _coreOptions = coreOptions.Value;
 
     /// <summary>
     /// Revokes a token using explicit provider-agnostic options.
@@ -63,7 +62,7 @@ public sealed class TokenRevocationService(
             if (response.IsSuccessStatusCode)
                 return true;
 
-            var errorContent = await IdpErrorBodyReader.ReadSafeAsync(response, _coreOptions, cancellationToken);
+            var errorContent = await IdpErrorBodyReader.ReadSafeAsync(response, coreOptionsMonitor.CurrentValue, cancellationToken);
             logger.RevocationFailed((int)response.StatusCode, errorContent);
             return false;
         }

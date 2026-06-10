@@ -143,6 +143,34 @@ public sealed class RawForwardUrlMutationTests
     }
 
     [Fact]
+    public async Task RewriteToDifferentHost_KeepsTransformerReplacedSensitiveHeader()
+    {
+        // Regression (L12): the re-scope guards against smuggling CLIENT-supplied sensitive
+        // headers to a host they were never allow-listed for, but it used to strip by header
+        // NAME. A sensitive header the transformer itself replaced in ModifyRequest is
+        // server-side intent (e.g. injecting its own credential for the new host) and must
+        // survive the re-scope.
+        var caller = new CapturingRawBackendCaller();
+        using var bff = await CreateBffAsync<RewriteAndReplaceAuthTransformer>(caller, builder => builder
+            .FromGet("/proxy/files/{id}")
+            .ToBackend("GET", "https://original.test/files/{id}")
+            .AllowForwardingHeaders(["Authorization"], ["original.test"])
+            .AllowAnonymous());
+        var client = bff.GetTestServer().CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/proxy/files/42");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer client-token");
+        var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        Assert.Equal("https://rewritten.test/redirected/42", caller.LastRequest!.Url);
+        var auth = Assert.Single(
+            caller.LastRequest.Headers!,
+            h => string.Equals(h.Key, "Authorization", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("Bearer server-token", auth.Value);
+    }
+
+    [Fact]
     public async Task RewrittenUrl_ToUntrustedHost_WithUserTokenPolicy_IsRejectedBeforeForwarding()
     {
         // The defense-in-depth gate that closes the SSRF / token-leak vector lives in BackendCaller and
@@ -228,6 +256,21 @@ public sealed class RawForwardUrlMutationTests
         {
             var id = context.RouteValues.TryGetValue("id", out var v) ? v?.ToString() : null;
             request.RequestUri = new Uri($"https://rewritten.test/redirected/{id}");
+        }
+    }
+
+    /// <summary>
+    /// Rewrites the backend URL to a different host and replaces the client's Authorization
+    /// header with a server-side credential inside the documented ModifyRequest hook.
+    /// </summary>
+    private sealed class RewriteAndReplaceAuthTransformer : RawForwardTransformer
+    {
+        protected override void ModifyRequest(HttpRequestMessage request, TransformerContext context)
+        {
+            var id = context.RouteValues.TryGetValue("id", out var v) ? v?.ToString() : null;
+            request.RequestUri = new Uri($"https://rewritten.test/redirected/{id}");
+            request.Headers.Remove("Authorization");
+            request.Headers.TryAddWithoutValidation("Authorization", "Bearer server-token");
         }
     }
 

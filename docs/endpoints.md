@@ -239,7 +239,7 @@ app.MapTransformer<ProductTransformer, ProductResponse>()
 
 ### Optional Authentication
 
-Use `.AllowAnonymousWithOptionalAuth()` for endpoints that work for both authenticated and anonymous users:
+Use `.AllowAnonymousWithOptionalAuth()` for endpoints that work for both authenticated and anonymous users. (`.AllowAnonymous()` behaves identically: any endpoint that does not require authentication resolves the auth context optionally, so present credentials still populate `context.AuthContext` and an anonymous request never throws or counts as an authentication failure.)
 
 ```csharp
 public class ProductTransformer : TransformerBase<ProductResponse>

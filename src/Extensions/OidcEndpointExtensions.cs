@@ -62,6 +62,11 @@ public static class OidcEndpointExtensions
         string path = "/bff/login",
         Action<OidcLoginOptions>? configureOptions = null)
     {
+        // Presence of the registry is the sentinel for AddOidcEndpoints having run; without it
+        // the middleware would fail at pipeline build with an opaque "Unable to resolve service
+        // for type 'IReturnUrlProtector'" instead of this actionable message.
+        _ = GetPipelineRegistry(app, nameof(UseOidcLogin));
+
         var options = BuildEndpointOptions(app, configureOptions);
 
         var failure = RedirectUriValidation.ValidateConfiguredRedirectUri(
@@ -156,11 +161,9 @@ public static class OidcEndpointExtensions
         // host is built, using async APIs as intended.
         if (options.PerformGlobalLogout)
         {
-            var registry = app.ApplicationServices.GetService<OidcEndpointPipelineRegistry>()
-                ?? throw new InvalidOperationException(
-                    "UseOidcLogout requires services.AddOidcEndpoints() to have been called " +
-                    "(or AddPortaOidcAuth, which wires it internally).");
+            var registry = GetPipelineRegistry(app, nameof(UseOidcLogout));
             registry.RequireGlobalLogoutPreconditions();
+            UseStartupCheckBackstop(app, registry);
         }
 
         // Use middleware with path and options
@@ -229,9 +232,11 @@ public static class OidcEndpointExtensions
         // anonymous caller terminate any session (or, with no audience check, lets
         // a token minted for another RP terminate sessions here). The settings exist
         // only as a Development debugging affordance; in any non-dev environment
-        // they must be on.
+        // they must be on. Fail closed when no IHostEnvironment is registered
+        // (bare-container hosts): only an explicit Development environment may
+        // relax the checks.
         var env = app.ApplicationServices.GetService<IHostEnvironment>();
-        if (env is not null && !env.IsDevelopment())
+        if (env is null || !env.IsDevelopment())
         {
             var failures = new List<string>();
             if (!options.ValidateSignature)
@@ -246,7 +251,8 @@ public static class OidcEndpointExtensions
                 throw new OptionsValidationException(
                     nameof(OidcBackChannelLogoutOptions),
                     typeof(OidcBackChannelLogoutOptions),
-                    [$"Back-channel logout cannot run with {string.Join(", ", failures)} outside IHostEnvironment.IsDevelopment(). " +
+                    [$"Back-channel logout cannot run with {string.Join(", ", failures)} outside IHostEnvironment.IsDevelopment() " +
+                     "(hosts without a registered IHostEnvironment are treated as production). " +
                      "Disabling these checks lets an unauthenticated caller terminate arbitrary sessions."]);
             }
         }
@@ -324,11 +330,9 @@ public static class OidcEndpointExtensions
         // is built, using await against IAuthorizationPolicyProvider.GetPolicyAsync rather
         // than blocking the pipeline-build thread (which would deadlock against a genuinely
         // async custom policy provider).
-        var pipelineRegistry = app.ApplicationServices.GetService<OidcEndpointPipelineRegistry>()
-            ?? throw new InvalidOperationException(
-                "UseSessionAdmin requires services.AddOidcEndpoints() to have been called " +
-                "(or AddPortaOidcAuth, which wires it internally).");
+        var pipelineRegistry = GetPipelineRegistry(app, nameof(UseSessionAdmin));
         pipelineRegistry.RequirePolicy(options.RequirePolicy);
+        UseStartupCheckBackstop(app, pipelineRegistry);
 
         // Use authorization middleware for the session admin path
         // We'll map this as a branch with authorization
@@ -381,6 +385,33 @@ public static class OidcEndpointExtensions
 
         return options;
     }
+
+    private static OidcEndpointPipelineRegistry GetPipelineRegistry(IApplicationBuilder app, string methodName)
+        => app.ApplicationServices.GetService<OidcEndpointPipelineRegistry>()
+            ?? throw new InvalidOperationException(
+                $"{methodName} requires services.AddOidcEndpoints() to have been called " +
+                "(or AddPortaOidcAuth, which wires it internally).");
+
+    /// <summary>
+    /// Re-runs the registry verification on the first request when requirements were recorded
+    /// after <see cref="OidcEndpointStartupCheck"/> already ran. In <c>Startup.Configure</c> /
+    /// TestServer-style hosts the pipeline is built by the web host's own hosted service, AFTER
+    /// user-registered hosted services started - without this backstop those hosts would get a
+    /// silent false pass instead of a fail-fast error. Once everything recorded has been
+    /// verified, the per-request cost is a single flag check.
+    /// </summary>
+    private static void UseStartupCheckBackstop(IApplicationBuilder app, OidcEndpointPipelineRegistry registry)
+    {
+        app.Use(async (context, next) =>
+        {
+            if (registry.HasPendingVerification)
+            {
+                await registry.VerifyPendingAsync(context.RequestServices).ConfigureAwait(false);
+            }
+
+            await next(context).ConfigureAwait(false);
+        });
+    }
 }
 
 /// <summary>
@@ -418,7 +449,9 @@ public static class OidcEndpointServiceExtensions
         // Pipeline-build-time configuration (policy names, global-logout requests) is
         // recorded here so a hosted service can verify it asynchronously after the host
         // is built - avoids blocking sync-over-async against IAuthorizationPolicyProvider
-        // and IAuthenticationSchemeProvider.
+        // and IAuthenticationSchemeProvider. Hosts that build the pipeline after hosted
+        // services start (Startup.Configure, TestServer) are covered by a first-request
+        // backstop installed alongside each recording.
         services.TryAddSingleton<OidcEndpointPipelineRegistry>();
         services.AddHostedService<OidcEndpointStartupCheck>();
 

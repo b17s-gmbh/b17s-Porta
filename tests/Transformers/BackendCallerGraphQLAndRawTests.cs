@@ -237,13 +237,16 @@ public sealed class BackendCallerGraphQLAndRawTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.Unauthorized)]
-    [InlineData(HttpStatusCode.Forbidden)]
-    public async Task GraphQL_BackendAuthFailure_MappedTo502_LikeTypedRoutes(HttpStatusCode backendStatus)
+    [InlineData(HttpStatusCode.Unauthorized, BackendErrorType.AuthenticationError)]
+    [InlineData(HttpStatusCode.Forbidden, BackendErrorType.AuthorizationError)]
+    public async Task GraphQL_BackendAuthFailure_MappedTo502_LikeTypedRoutes(
+        HttpStatusCode backendStatus, BackendErrorType expectedType)
     {
         // A backend 401/403 means the BFF's credentials to the backend are wrong, NOT that the
         // user's session is invalid. The default mapper turns these into 502 so the frontend
-        // doesn't sign the user out — identical to the typed CallAsync path.
+        // doesn't sign the user out — identical to the typed CallAsync path. The error type
+        // keeps naming the actual backend rejection (L15): the mapped status is the
+        // client-visible code, the type is the diagnosis.
         var handler = new StubHandler(backendStatus, """{"data":null}""", "application/json");
         var caller = CreateCaller(handler);
 
@@ -254,7 +257,9 @@ public sealed class BackendCallerGraphQLAndRawTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal(502, result.HttpStatusCode);
-        Assert.Equal(BackendErrorType.ServerError, result.ErrorType);
+        Assert.Equal(expectedType, result.ErrorType);
+        // The error type must not leak the unmapped status back to the client.
+        Assert.Equal(502, result.ToBackendResult().StatusCode);
     }
 
     [Fact]
@@ -282,11 +287,11 @@ public sealed class BackendCallerGraphQLAndRawTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.Unauthorized, "UNAUTHENTICATED")]
-    [InlineData(HttpStatusCode.Unauthorized, "NOT_FOUND")]
-    [InlineData(HttpStatusCode.Forbidden, "FORBIDDEN")]
+    [InlineData(HttpStatusCode.Unauthorized, "UNAUTHENTICATED", BackendErrorType.AuthenticationError)]
+    [InlineData(HttpStatusCode.Unauthorized, "NOT_FOUND", BackendErrorType.AuthenticationError)]
+    [InlineData(HttpStatusCode.Forbidden, "FORBIDDEN", BackendErrorType.AuthorizationError)]
     public async Task GraphQL_TransportAuthFailureWithErrorsEnvelope_StillMappedTo502(
-        HttpStatusCode backendStatus, string envelopeCode)
+        HttpStatusCode backendStatus, string envelopeCode, BackendErrorType expectedType)
     {
         // M2 regression: a backend rejecting the BFF's forwarded credential commonly answers
         // HTTP 401 *with* a GraphQL errors envelope ({"errors":[{"extensions":{"code":
@@ -307,7 +312,8 @@ public sealed class BackendCallerGraphQLAndRawTests
         Assert.False(result.IsSuccess);
         Assert.Equal(502, result.HttpStatusCode);
         Assert.Equal(502, result.MappedStatusCode);
-        Assert.Equal(BackendErrorType.ServerError, result.ErrorType);
+        // The error type names the actual transport rejection; only the status is neutralized.
+        Assert.Equal(expectedType, result.ErrorType);
         // The envelope is suppressed client-side (logged server-side only).
         Assert.Null(result.Errors);
 
@@ -714,18 +720,40 @@ public sealed class BackendCallerGraphQLAndRawTests
         Assert.False(result.IsSuccess);
         Assert.Equal(502, result.StatusCode);
         Assert.DoesNotContain("auth handler failed", result.Error);
-        // The error type follows the mapped status (matching the real-backend-401 path), so
-        // conversions that key on AuthenticationError cannot resurrect the 401.
-        Assert.Equal(BackendErrorType.ServerError, result.ErrorType);
+        // The error type keeps naming the auth-stage failure; only the status is neutralized.
+        // No conversion derives a status from the error type, so the 401 cannot resurface.
+        Assert.Equal(BackendErrorType.AuthenticationError, result.ErrorType);
         Assert.Null(handler.LastRequest); // the backend was never called
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, BackendErrorType.AuthenticationError)]
+    [InlineData(HttpStatusCode.Forbidden, BackendErrorType.AuthorizationError)]
+    public async Task Call_RealBackendAuthRejection_Surfaces502_WithAuthErrorType(
+        HttpStatusCode backendStatus, BackendErrorType expectedType)
+    {
+        // L15: the error type is classified from the ORIGINAL backend status, so a genuine
+        // backend credential rejection stays AuthenticationError/AuthorizationError even though
+        // the default mapper neutralizes the client-visible status to 502. Previously the type
+        // was recomputed from the mapped 502, making AuthenticationError unreachable for real
+        // backend 401s and indistinguishable from a backend 5xx.
+        var handler = new StubHandler(backendStatus, "denied", "text/plain");
+        var caller = CreateCaller(handler);
+
+        var request = new BackendRequest { Method = "GET", Url = "https://backend.test/x" };
+        var result = await caller.CallAsync<Product>(request, TestContext.Current.CancellationToken);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(502, result.StatusCode);
+        Assert.Equal(expectedType, result.ErrorType);
     }
 
     [Fact]
     public async Task CallGraphQL_AuthHandlerThrows_MapsTo502_AndToBackendResultKeeps502()
     {
         // Same M1 guarantee on the GraphQL path, including the ToBackendResult round-trip:
-        // GraphQLResult.ToBackendResult turns AuthenticationError into a 401, so the mapped
-        // failure must not carry that error type.
+        // the result keeps AuthenticationError as its diagnosis, and ToBackendResult must
+        // surface the mapped 502 rather than deriving a 401 from that error type.
         var handler = new StubHandler(HttpStatusCode.OK, "{}", "application/json");
         var caller = CreateCaller(handler, authHandler: new ThrowingAuthHandler("Throwing"));
 
@@ -736,10 +764,12 @@ public sealed class BackendCallerGraphQLAndRawTests
 
         Assert.False(result.IsSuccess);
         Assert.Equal(502, result.MappedStatusCode);
+        Assert.Equal(BackendErrorType.AuthenticationError, result.ErrorType);
         Assert.DoesNotContain("auth handler failed", result.Error);
 
         var backendResult = result.ToBackendResult();
         Assert.Equal(502, backendResult.StatusCode);
+        Assert.Equal(BackendErrorType.AuthenticationError, backendResult.ErrorType);
         Assert.Null(handler.LastRequest); // the backend was never called
     }
 

@@ -9,6 +9,7 @@ using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
 using b17s.Porta.Services;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -308,6 +309,34 @@ public sealed class ReferenceTokenServiceTests
         Assert.Equal("secret-v2", captured.LastForm!["client_secret"]);
     }
 
+    [Fact]
+    public async Task IntrospectTokenAsync_LogIdpErrorBodiesToggle_TakesEffectWithoutRestart()
+    {
+        // PortaCoreOptions is read via IOptionsMonitor.CurrentValue per call (the service is
+        // a singleton), so flipping LogIdpErrorBodies - documented as a temporary debugging
+        // switch - through an appsettings.json reload must apply without a process restart.
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("idp-error-detail", Encoding.UTF8, "application/json"),
+        });
+        var coreMonitor = new MutableOptionsMonitor<PortaCoreOptions>(
+            new PortaCoreOptions { LogIdpErrorBodies = false });
+        var logger = new ListLogger<ReferenceTokenService>();
+        var sut = BuildWithMonitor(
+            new MutableOptionsMonitor<ReferenceTokenAuthOptions>(new ReferenceTokenAuthOptions { Authority = "https://idp.test" }),
+            handler, WithIntrospectionEndpoint(), coreMonitor, logger);
+
+        await sut.IntrospectTokenAsync("tok", TestContext.Current.CancellationToken);
+        var redacted = Assert.Single(logger.Entries);
+        Assert.Contains("(redacted)", redacted.Message);
+        Assert.DoesNotContain("idp-error-detail", redacted.Message);
+
+        coreMonitor.Current = new PortaCoreOptions { LogIdpErrorBodies = true };
+
+        await sut.IntrospectTokenAsync("tok", TestContext.Current.CancellationToken);
+        Assert.Contains("idp-error-detail", logger.Entries[^1].Message);
+    }
+
     private static OpenIdConnectConfiguration WithIntrospectionEndpoint() =>
         new() { AdditionalData = { ["introspection_endpoint"] = "https://idp.test/connect/introspect" } };
 
@@ -326,12 +355,14 @@ public sealed class ReferenceTokenServiceTests
     private static ReferenceTokenService BuildWithMonitor(
         IOptionsMonitor<ReferenceTokenAuthOptions> monitor,
         HttpMessageHandler handler,
-        OpenIdConnectConfiguration? discovery)
+        OpenIdConnectConfiguration? discovery,
+        IOptionsMonitor<PortaCoreOptions>? coreMonitor = null,
+        ILogger<ReferenceTokenService>? logger = null)
     {
         var factory = new SingleClientFactory(new HttpClient(handler));
         var discoveryService = new StaticDiscoveryService(discovery);
-        var core = Options.Create(new PortaCoreOptions());
-        return new ReferenceTokenService(factory, discoveryService, NullLogger<ReferenceTokenService>.Instance, monitor, core);
+        var core = coreMonitor ?? new MutableOptionsMonitor<PortaCoreOptions>(new PortaCoreOptions());
+        return new ReferenceTokenService(factory, discoveryService, logger ?? NullLogger<ReferenceTokenService>.Instance, monitor, core);
     }
 
     private sealed class RecordingHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
@@ -375,5 +406,22 @@ public sealed class ReferenceTokenServiceTests
         public T CurrentValue => Current;
         public T Get(string? name) => Current;
         public IDisposable? OnChange(Action<T, string?> listener) => null;
+    }
+
+    private sealed class ListLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            => Entries.Add((logLevel, formatter(state, exception)));
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+            public void Dispose() { }
+        }
     }
 }

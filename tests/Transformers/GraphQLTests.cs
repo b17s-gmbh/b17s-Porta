@@ -224,22 +224,46 @@ public sealed class GraphQLTests
     }
 
     [Theory]
-    [InlineData(BackendErrorType.AuthenticationError, 401)]
-    [InlineData(BackendErrorType.AuthorizationError, 403)]
-    [InlineData(BackendErrorType.NetworkError, 502)]
-    [InlineData(BackendErrorType.Timeout, 504)]
-    public void ToBackendResult_TypedFailures_ProjectToCorrectStatus(BackendErrorType errorType, int expectedStatus)
+    [InlineData(BackendErrorType.AuthenticationError)]
+    [InlineData(BackendErrorType.AuthorizationError)]
+    [InlineData(BackendErrorType.NetworkError)]
+    [InlineData(BackendErrorType.Timeout)]
+    [InlineData(BackendErrorType.ServerError)]
+    public void ToBackendResult_AllFailures_UseMappedStatus_AndPreserveErrorType(BackendErrorType errorType)
     {
-        // The typed failure factories (Authentication/Authorization/Network/Timeout)
-        // ignore MappedStatusCode and use their canonical status. This is intentional:
-        // a 401 is a 401 regardless of what the GraphQL extension code mapping said.
-        var graphQL = GraphQLResult<string>.FromBackendError(599, "x", errorType);
+        // L15: the error type is the diagnosis, MappedStatusCode is the client-visible status.
+        // ToBackendResult must never re-derive a status from the error type - deriving 401 from
+        // AuthenticationError would resurrect a status the IBackendErrorMapper deliberately
+        // neutralized (default: backend 401 -> 502).
+        var graphQL = GraphQLResult<string>.FromBackendError(502, "x", errorType);
+
+        var backend = graphQL.ToBackendResult();
+
+        Assert.False(backend.IsSuccess);
+        Assert.Equal(502, backend.StatusCode);
+        Assert.Equal(errorType, backend.ErrorType);
+    }
+
+    [Theory]
+    [InlineData("UNAUTHENTICATED", 401, BackendErrorType.AuthenticationError)]
+    [InlineData("FORBIDDEN", 403, BackendErrorType.AuthorizationError)]
+    [InlineData("TIMEOUT", 504, BackendErrorType.Timeout)]
+    public void ToBackendResult_EnvelopeErrors_ProjectTheCodeMappedStatus(
+        string code, int expectedStatus, BackendErrorType expectedType)
+    {
+        // Application-level GraphQL errors (envelope over HTTP 200) keep their code -> status
+        // mapping through the projection: an UNAUTHENTICATED envelope is the user's own denial
+        // and legitimately surfaces as 401.
+        var graphQL = GraphQLResult<string>.FromGraphQLErrors(new[]
+        {
+            new GraphQLError { Message = "denied", Extensions = new GraphQLErrorExtensions { Code = code } },
+        });
 
         var backend = graphQL.ToBackendResult();
 
         Assert.False(backend.IsSuccess);
         Assert.Equal(expectedStatus, backend.StatusCode);
-        Assert.Equal(errorType, backend.ErrorType);
+        Assert.Equal(expectedType, backend.ErrorType);
     }
 
     [Fact]

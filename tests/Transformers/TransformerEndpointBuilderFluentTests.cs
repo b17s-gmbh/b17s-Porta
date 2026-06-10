@@ -177,6 +177,55 @@ public sealed class TransformerEndpointBuilderFluentTests
     }
 
     [Fact]
+    public async Task AllowAnonymous_StillPopulatesAuthContext_WhenCredentialsPresent()
+    {
+        // L14: plain AllowAnonymous() resolves auth optionally too (it is equivalent to
+        // AllowAnonymousWithOptionalAuth) - present credentials still populate the context.
+        var backend = new MockBackendCaller()
+            .SetupResponse("https://backend.test/open", new EchoResponse { Echoed = "ok" });
+        var transformer = new RecordingTransformer();
+        using var bff = await CreateBffAsync(endpoints => endpoints
+            .MapTransformer<RecordingTransformer, EchoResponse>()
+            .FromGet("/api/open")
+            .ToBackend("GET", "https://backend.test/open")
+            .AllowAnonymous()
+            .Build(), backend, transformer: transformer, authenticated: true);
+
+        var client = bff.GetTestServer().CreateClient();
+        var response = await client.GetAsync("/api/open", TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        Assert.NotNull(transformer.LastAuthContext);
+        Assert.True(transformer.LastAuthContext!.IsAuthenticated);
+    }
+
+    [Fact]
+    public async Task AllowAnonymous_ThrowingAuthProvider_DegradesToAnonymous_InsteadOf500()
+    {
+        // L14 regression: endpoints that don't enforce identity resolve the auth context via
+        // TryGetAuthContextAsync (matching raw forward). A custom provider that throws on a
+        // missing/invalid credential must degrade the request to anonymous - previously the
+        // typed builder used required-mode resolution here, so every such hit became a 500
+        // (and an anonymous hit was counted as an authentication failure).
+        var backend = new MockBackendCaller()
+            .SetupResponse("https://backend.test/open", new EchoResponse { Echoed = "ok" });
+        var transformer = new RecordingTransformer();
+        using var bff = await CreateBffAsync(endpoints => endpoints
+            .MapTransformer<RecordingTransformer, EchoResponse>()
+            .FromGet("/api/open")
+            .ToBackend("GET", "https://backend.test/open")
+            .AllowAnonymous()
+            .Build(), backend, transformer: transformer, authProvider: new ThrowingAuthProvider());
+
+        var client = bff.GetTestServer().CreateClient();
+        var response = await client.GetAsync("/api/open", TestContext.Current.CancellationToken);
+
+        response.EnsureSuccessStatusCode();
+        Assert.NotNull(transformer.LastAuthContext);
+        Assert.False(transformer.LastAuthContext!.IsAuthenticated);
+    }
+
+    [Fact]
     public async Task ToAny_ForwardsIncomingMethod_OnBackendRequest()
     {
         // ToAny is the method-preserving proxy: backend method follows the inbound request.
@@ -573,7 +622,8 @@ public sealed class TransformerEndpointBuilderFluentTests
         IBackendCaller backend,
         RecordingTransformer? transformer = null,
         bool authenticated = false,
-        bool withStubAuthScheme = false)
+        bool withStubAuthScheme = false,
+        IAuthenticationProvider? authProvider = null)
     {
         transformer ??= new RecordingTransformer();
         var hostBuilder = new HostBuilder()
@@ -589,7 +639,11 @@ public sealed class TransformerEndpointBuilderFluentTests
                             .AddScheme<AuthenticationSchemeOptions, StubAuthHandler>(StubAuthHandler.SchemeName, _ => { });
                     }
                     services.AddAuthorization();
-                    if (authenticated)
+                    if (authProvider is not null)
+                    {
+                        services.AddSingleton(authProvider);
+                    }
+                    else if (authenticated)
                     {
                         services.AddSingleton<IAuthenticationProvider>(new StubAuthProvider(authenticated: true));
                     }
@@ -684,6 +738,19 @@ public sealed class TransformerEndpointBuilderFluentTests
     {
         public Task<AuthenticationContext> GetAuthContextAsync(HttpContext context, CancellationToken cancellationToken = default)
             => Task.FromResult(AuthenticationContext.Unauthenticated());
+
+        public Task<AuthenticationContext?> RefreshAsync(AuthenticationContext current, CancellationToken cancellationToken = default)
+            => Task.FromResult<AuthenticationContext?>(null);
+
+        public Task InvalidateAsync(HttpContext context, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    // Models a custom provider that throws instead of returning an unauthenticated context
+    // (the interface asks providers not to throw, but the optional path must tolerate it).
+    private sealed class ThrowingAuthProvider : IAuthenticationProvider
+    {
+        public Task<AuthenticationContext> GetAuthContextAsync(HttpContext context, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("no credential");
 
         public Task<AuthenticationContext?> RefreshAsync(AuthenticationContext current, CancellationToken cancellationToken = default)
             => Task.FromResult<AuthenticationContext?>(null);

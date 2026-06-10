@@ -14,14 +14,12 @@ namespace b17s.Porta.Auth.Tokens;
 /// </summary>
 public sealed class TokenExchangeService(
     IHttpClientFactory httpClientFactory,
-    IOptions<PortaCoreOptions> coreOptions,
+    IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor,
     ILogger<TokenExchangeService> logger) : ITokenExchangeService
 {
     private const string AccessTokenTypeUrn = "urn:ietf:params:oauth:token-type:access_token";
 
     private static readonly JsonWebTokenHandler JwtHandler = new();
-
-    private readonly PortaCoreOptions _coreOptions = coreOptions.Value;
 
     /// <inheritdoc/>
     public async Task<TokenExchangeResult> ExchangeAsync(string accessToken, ApiConfiguration apiConfig, CancellationToken cancellationToken = default)
@@ -91,9 +89,12 @@ public sealed class TokenExchangeService(
             if (!httpResponse.IsSuccessStatusCode)
             {
                 logger.TokenExchangeFailed(apiConfig.ApiPath, (int)httpResponse.StatusCode);
-                if (_coreOptions.LogIdpErrorBodies)
+                // Read CurrentValue per call: LogIdpErrorBodies is a temporary debugging
+                // switch and must follow appsettings.json reloads without a restart.
+                var coreOptions = coreOptionsMonitor.CurrentValue;
+                if (coreOptions.LogIdpErrorBodies)
                 {
-                    var errorContent = await IdpErrorBodyReader.ReadSafeAsync(httpResponse, _coreOptions, cancellationToken);
+                    var errorContent = await IdpErrorBodyReader.ReadSafeAsync(httpResponse, coreOptions, cancellationToken);
                     logger.TokenExchangeErrorResponse(errorContent);
                 }
                 // Do not bake the response body into the failure string - verbose IdPs echo

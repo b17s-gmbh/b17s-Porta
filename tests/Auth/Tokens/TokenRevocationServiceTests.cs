@@ -5,6 +5,7 @@ using System.Text;
 using b17s.Porta.Auth.Discovery;
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Tests.Fixtures;
 
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -443,7 +444,7 @@ public sealed class TokenRevocationServiceTests
     {
         var factory = new SingleClientFactory(new HttpClient(handler));
         var discoveryService = new StaticDiscoveryService(discovery);
-        var core = Options.Create(new PortaCoreOptions());
+        var core = new StaticOptionsMonitor<PortaCoreOptions>(new PortaCoreOptions());
         return new TokenRevocationService(
             factory,
             discoveryService,

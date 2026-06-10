@@ -134,11 +134,15 @@ public sealed class TrustedHostValidator : ITrustedHostValidator
     // template's authority parsed cleanly to begin with. A template like
     // `http://{host}/api` would otherwise sail through startup validation against the
     // literal substring `{host}`.
+    // The authority ends at the first '/', '?' or '#': a path-less URL can still carry a
+    // query or fragment (`https://api.example.com?x={y}`), whose placeholders are fine.
+    private static readonly char[] AuthorityEndDelimiters = ['/', '?', '#'];
+
     private static bool HasPlaceholderInAuthority(string url)
     {
         var schemeEnd = url.IndexOf("://", StringComparison.Ordinal);
         var authorityStart = schemeEnd < 0 ? 0 : schemeEnd + 3;
-        var authorityEnd = url.IndexOf('/', authorityStart);
+        var authorityEnd = url.IndexOfAny(AuthorityEndDelimiters, authorityStart);
         if (authorityEnd < 0) authorityEnd = url.Length;
 
         var prefix = url[..authorityEnd];
