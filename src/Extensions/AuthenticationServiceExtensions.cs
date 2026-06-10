@@ -8,6 +8,7 @@ using b17s.Porta.Configuration;
 using b17s.Porta.Services;
 
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
@@ -277,7 +278,8 @@ public static class AuthenticationServiceExtensions
     /// back-channel logout flows can reach this session and revoke its tokens at
     /// the IdP.
     /// </summary>
-    private static async Task OnTokenValidatedAsync(TokenValidatedContext context)
+    private static async Task OnTokenValidatedAsync(
+        Microsoft.AspNetCore.Authentication.OpenIdConnect.TokenValidatedContext context)
     {
         var sp = context.HttpContext.RequestServices;
         var sessionManagement = sp.GetService<ISessionManagementService>();
@@ -592,7 +594,15 @@ public static class AuthenticationServiceExtensions
     /// Signing keys are fetched from the OIDC discovery document at <see cref="JwtBearerAuthOptions.Authority"/>
     /// and rotated automatically. The provider does not refresh tokens; clients must obtain new ones
     /// before expiry.
+    /// <para/>
+    /// The JwtBearer handler binds from the composed <c>IOptions&lt;JwtBearerAuthOptions&gt;</c>
+    /// pipeline, so <c>services.Configure&lt;JwtBearerAuthOptions&gt;(...)</c> /
+    /// <c>PostConfigure&lt;JwtBearerAuthOptions&gt;(...)</c> registered before or after this call
+    /// (e.g. injecting the authority from a secret store) is honored.
     /// </remarks>
+    /// <param name="services">The service collection</param>
+    /// <param name="configureOptions">Action to configure <see cref="JwtBearerAuthOptions"/></param>
+    /// <returns>The service collection for chaining</returns>
     /// <example>
     /// <code>
     /// builder.Services.AddPortaJwtAuthentication(options =>
@@ -608,12 +618,18 @@ public static class AuthenticationServiceExtensions
     {
         services.Configure(configureOptions);
 
-        var options = new JwtBearerAuthOptions();
-        configureOptions(options);
-
         services.AddAuthentication()
-            .AddJwtBearer(jwtOptions =>
+            .AddJwtBearer();
+
+        // Bind the JwtBearer handler from the composed IOptions<JwtBearerAuthOptions>
+        // pipeline (read at options-build time) rather than a registration-time snapshot,
+        // so external Configure/PostConfigure<JwtBearerAuthOptions> reaches the actual
+        // handler - the same snapshot-drift fix already applied to the OpenIdConnect
+        // handler in AddCookieAndOidcAuthentication.
+        services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+            .Configure<IOptions<JwtBearerAuthOptions>>((jwtOptions, auth) =>
             {
+                var options = auth.Value;
                 jwtOptions.Authority = options.Authority;
                 jwtOptions.RequireHttpsMetadata = options.RequireHttpsMetadata;
                 jwtOptions.SaveToken = true; // Required so JwtBearerAuthProvider can extract the raw token

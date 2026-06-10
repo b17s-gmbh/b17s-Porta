@@ -368,28 +368,9 @@ public static class PortaServiceExtensions
         this IServiceCollection services,
         Action<OidcAuthOptions> configureOptions)
     {
-        // Single source of truth: materialise the caller's lambda once into a snapshot,
-        // then project it into both option types. Re-invoking the lambda per
-        // IOptions resolution would fire any side effects (logging, secrets fetches)
-        // repeatedly and risk drift between the two registrations.
-        var snapshot = new OidcAuthOptions();
-        configureOptions(snapshot);
+        services.Configure(configureOptions);
 
-        services.Configure<OidcAuthOptions>(opt => CopyOptions(snapshot, opt));
-
-        // Validate OidcAuthOptions at host start so a misconfigured BFF fails on
-        // boot rather than on the first OIDC redirect.
-        services.TryAddEnumerable(
-            ServiceDescriptor.Singleton<
-                Microsoft.Extensions.Options.IValidateOptions<OidcAuthOptions>,
-                OidcAuthOptionsValidator>());
-        services.AddOptions<OidcAuthOptions>().ValidateOnStart();
-
-        // Pass the copy action to AddPortaAuthentication so it registers the Configure<>
-        // and importantly populates the startup-time config snapshot used for DI wiring.
-        services.AddPortaAuthentication(opt => CopyOptions(snapshot, opt));
-
-        return services;
+        return services.AddPortaOidcAuthCore();
     }
 
     /// <summary>
@@ -418,12 +399,53 @@ public static class PortaServiceExtensions
         IConfiguration configuration,
         string sectionName = OidcAuthOptions.SectionName)
     {
-        var snapshot = new OidcAuthOptions();
-        configuration.GetSection(sectionName).Bind(snapshot);
+        // Bind through the options pipeline (not a one-shot snapshot) so the binding
+        // is reload-aware and composes with consumer Configure/PostConfigure - the
+        // same contract as AddPortaAuthentication(IConfiguration).
+        services.Configure<OidcAuthOptions>(configuration.GetSection(sectionName));
 
-        // Route through the Action<> overload so both option types are registered
-        // from a single source. The Action<> overload owns all Configure<> calls.
-        return services.AddPortaOidcAuth(opt => CopyOptions(snapshot, opt));
+        return services.AddPortaOidcAuthCore();
+    }
+
+    /// <summary>
+    /// Shared registration body for both <c>AddPortaOidcAuth</c> overloads.
+    /// <c>IOptions&lt;OidcAuthOptions&gt;</c> is the single source of truth: its fully
+    /// composed value - including every consumer <c>Configure</c>/<c>PostConfigure</c>,
+    /// e.g. a <c>ClientSecret</c> injected from a secret store - is projected into
+    /// <see cref="SessionAuthenticationConfiguration"/> at options-build time, which is
+    /// what the cookie/OIDC handlers and token services bind from. A prior implementation
+    /// projected a registration-time snapshot instead, making
+    /// <c>PostConfigure&lt;OidcAuthOptions&gt;</c> a silent no-op.
+    /// </summary>
+    private static IServiceCollection AddPortaOidcAuthCore(this IServiceCollection services)
+    {
+        // Validate OidcAuthOptions at host start so a misconfigured BFF fails on
+        // boot rather than on the first OIDC redirect.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<
+                IValidateOptions<OidcAuthOptions>,
+                OidcAuthOptionsValidator>());
+        services.AddOptions<OidcAuthOptions>().ValidateOnStart();
+
+        // Project the composed OidcAuthOptions into SessionAuthenticationConfiguration.
+        // IOptionsFactory builds a fresh value per projection: IOptions would pin the
+        // boot-time value across configuration reloads, and IOptionsMonitor.CurrentValue
+        // can serve a stale cache during a reload (monitor invalidation callbacks fire
+        // in subscription order). CopyOptions deep-copies the mutable sub-objects so
+        // the two options types never alias state.
+        services.AddOptions<SessionAuthenticationConfiguration>()
+            .Configure<IOptionsFactory<OidcAuthOptions>>((target, factory) =>
+                CopyOptions(factory.Create(Microsoft.Extensions.Options.Options.DefaultName), target));
+
+        // Forward OidcAuthOptions reload signals (e.g. the IConfiguration overload's
+        // section change tokens) so IOptionsMonitor<SessionAuthenticationConfiguration>
+        // consumers rebuild instead of holding the boot-time projection forever.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<
+                IOptionsChangeTokenSource<SessionAuthenticationConfiguration>,
+                OidcAuthChangeTokenForwarder>());
+
+        return services.AddPortaAuthentication();
     }
 
     /// <summary>

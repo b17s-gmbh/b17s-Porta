@@ -116,6 +116,8 @@ builder.Services.AddPortaJwtAuthentication(options =>
 
 `AddPortaJwtAuthentication` can be combined with `AddPortaAuthentication` (or its `AddPortaOidcAuth` alias), `AddReferenceTokenAuthentication`, and `AddPortaAuthProvider<T>`. See [Combining authentication providers](#combining-authentication-providers) below for resolution semantics.
 
+The JwtBearer handler binds from the composed options pipeline, so `services.Configure<JwtBearerAuthOptions>(...)` / `PostConfigure<JwtBearerAuthOptions>(...)` registered before or after this call (e.g. injecting the authority from a secret store) is honored.
+
 #### How signing keys are managed
 
 Signing keys come from the OIDC discovery document at `{Authority}/.well-known/openid-configuration` and the JWKS endpoint it points to. Validation is handled by ASP.NET Core's `AddJwtBearer` handler: keys are cached in memory and refreshed on the schedule of its built-in `Microsoft.IdentityModel.Protocols.OpenIdConnect.ConfigurationManager` (its default cadence; an unknown `kid` also triggers an out-of-band refresh). Key rotation is handled automatically.

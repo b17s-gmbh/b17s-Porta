@@ -72,6 +72,10 @@ For production, layer Redis on top:
 builder.Services.AddStackExchangeRedisCache(o => o.Configuration = "...");
 ```
 
+## Endpoint options composition
+
+All four endpoint shims (`UseOidcLogin`, `UseOidcLogout`, `UseOidcBackChannelLogout`, `UseSessionAdmin`) build their options per call from the DI options pipeline: any `services.Configure<TOptions>(...)` / `PostConfigure<TOptions>(...)` composition is applied first, then the per-call lambda runs last and wins on conflicts. Each call gets a fresh options instance, so two endpoints registered with different lambdas never share state.
+
 ## UseOidcLogin
 
 Thin shim: validates the post-login destination (open-redirect guard + signed-return-url policy), then triggers the framework's challenge flow.

@@ -38,6 +38,12 @@ public static class OidcEndpointExtensions
     /// After successful authentication, the IdP redirects back to /bff/callback
     /// which should be handled by your OIDC callback handler.
     /// </para>
+    /// <para>
+    /// Options are built per call from the DI options pipeline: any
+    /// <c>services.Configure&lt;OidcLoginOptions&gt;(...)</c> /
+    /// <c>PostConfigure&lt;OidcLoginOptions&gt;(...)</c> composition is applied first, then
+    /// <paramref name="configureOptions"/> runs last and wins on conflicts.
+    /// </para>
     /// </remarks>
     /// <example>
     /// <code>
@@ -56,9 +62,7 @@ public static class OidcEndpointExtensions
         string path = "/bff/login",
         Action<OidcLoginOptions>? configureOptions = null)
     {
-        // Configure options
-        var options = new OidcLoginOptions();
-        configureOptions?.Invoke(options);
+        var options = BuildEndpointOptions(app, configureOptions);
 
         var failure = RedirectUriValidation.ValidateConfiguredRedirectUri(
             options.DefaultRedirectUri,
@@ -100,6 +104,12 @@ public static class OidcEndpointExtensions
     ///   <item>Redirects to the IdP's end_session_endpoint or the specified URI</item>
     /// </list>
     /// </para>
+    /// <para>
+    /// Options are built per call from the DI options pipeline: any
+    /// <c>services.Configure&lt;OidcLogoutOptions&gt;(...)</c> /
+    /// <c>PostConfigure&lt;OidcLogoutOptions&gt;(...)</c> composition is applied first, then
+    /// <paramref name="configureOptions"/> runs last and wins on conflicts.
+    /// </para>
     /// </remarks>
     /// <example>
     /// <code>
@@ -124,9 +134,7 @@ public static class OidcEndpointExtensions
         string path = "/bff/logout",
         Action<OidcLogoutOptions>? configureOptions = null)
     {
-        // Configure options
-        var options = new OidcLogoutOptions();
-        configureOptions?.Invoke(options);
+        var options = BuildEndpointOptions(app, configureOptions);
 
         var failure = RedirectUriValidation.ValidateConfiguredRedirectUri(
             options.DefaultRedirectUri,
@@ -192,6 +200,12 @@ public static class OidcEndpointExtensions
     /// <para>
     /// Important: Register this endpoint with your IdP's back-channel logout configuration.
     /// </para>
+    /// <para>
+    /// Options are built per call from the DI options pipeline: any
+    /// <c>services.Configure&lt;OidcBackChannelLogoutOptions&gt;(...)</c> /
+    /// <c>PostConfigure&lt;OidcBackChannelLogoutOptions&gt;(...)</c> composition is applied
+    /// first, then <paramref name="configureOptions"/> runs last and wins on conflicts.
+    /// </para>
     /// </remarks>
     /// <example>
     /// <code>
@@ -209,9 +223,7 @@ public static class OidcEndpointExtensions
         string path = "/bff/backchannel-logout",
         Action<OidcBackChannelLogoutOptions>? configureOptions = null)
     {
-        // Configure options
-        var options = new OidcBackChannelLogoutOptions();
-        configureOptions?.Invoke(options);
+        var options = BuildEndpointOptions(app, configureOptions);
 
         // Fail-fast: turning off signature / issuer / audience validation lets an
         // anonymous caller terminate any session (or, with no audience check, lets
@@ -269,6 +281,12 @@ public static class OidcEndpointExtensions
     /// if RequirePolicy is not specified. This prevents accidental exposure of session
     /// management functionality.
     /// </para>
+    /// <para>
+    /// Options are built per call from the DI options pipeline: any
+    /// <c>services.Configure&lt;SessionAdminOptions&gt;(...)</c> /
+    /// <c>PostConfigure&lt;SessionAdminOptions&gt;(...)</c> composition is applied first, then
+    /// <paramref name="configureOptions"/> runs last and wins on conflicts.
+    /// </para>
     /// </remarks>
     /// <example>
     /// <code>
@@ -291,9 +309,7 @@ public static class OidcEndpointExtensions
         string path = "/bff/admin/sessions",
         Action<SessionAdminOptions>? configureOptions = null)
     {
-        // Configure options
-        var options = new SessionAdminOptions();
-        configureOptions?.Invoke(options);
+        var options = BuildEndpointOptions(app, configureOptions);
 
         // Validate that a policy is specified
         if (string.IsNullOrEmpty(options.RequirePolicy))
@@ -344,6 +360,27 @@ public static class OidcEndpointExtensions
         return app;
     }
 
+    /// <summary>
+    /// Builds the effective options for a <c>Use*</c> call: a fresh instance created
+    /// through <see cref="IOptionsFactory{TOptions}"/> - so consumer
+    /// <c>Configure&lt;TOptions&gt;</c>/<c>PostConfigure&lt;TOptions&gt;</c> composition is
+    /// honored - with the per-call lambda applied last so it wins on conflicts. A fresh
+    /// instance per call means two endpoints registered with different lambdas never
+    /// share state. Falls back to plain defaults in bare hosts without the options
+    /// infrastructure.
+    /// </summary>
+    private static TOptions BuildEndpointOptions<TOptions>(
+        IApplicationBuilder app,
+        Action<TOptions>? configureOptions)
+        where TOptions : class, new()
+    {
+        var options = app.ApplicationServices.GetService<IOptionsFactory<TOptions>>()
+            ?.Create(Options.DefaultName)
+            ?? new TOptions();
+        configureOptions?.Invoke(options);
+
+        return options;
+    }
 }
 
 /// <summary>
@@ -361,11 +398,14 @@ public static class OidcEndpointServiceExtensions
     /// </remarks>
     public static IServiceCollection AddOidcEndpoints(this IServiceCollection services)
     {
-        // Register default options
-        services.Configure<OidcLoginOptions>(_ => { });
-        services.Configure<OidcLogoutOptions>(_ => { });
-        services.Configure<OidcBackChannelLogoutOptions>(_ => { });
-        services.Configure<SessionAdminOptions>(_ => { });
+        // Options infrastructure floor: each Use* endpoint builds its effective options
+        // through IOptionsFactory<TOptions>, so idiomatic services.Configure<TOptions>(...)
+        // / PostConfigure<TOptions>(...) composition reaches the middleware, with the
+        // per-call lambda applied last. No per-type Configure registration is needed -
+        // the factory runs whatever the consumer registered. (Empty Configure<T>(_ => { })
+        // placeholders used to live here while the middleware ignored the pipeline
+        // entirely - decoys that made Configure<T> look supported when it wasn't.)
+        services.AddOptions();
 
         // Data protection: AddPortaOidcAuth configures it with app-name + key-lifetime
         // via AddInfrastructure (AuthenticationServiceExtensions). This call is the
