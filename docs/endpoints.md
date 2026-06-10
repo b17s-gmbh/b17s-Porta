@@ -246,7 +246,13 @@ public class ProductTransformer : TransformerBase<ProductResponse>
 {
     public override async Task<ProductResponse> TransformAsync(TransformerContext context)
     {
-        var product = await CallBackendAsync<Product>(context);
+        var result = await CallBackendAsync(context);
+        if (!result.IsSuccess)
+        {
+            throw new InvalidOperationException(result.Error);
+        }
+
+        var product = result.Value!;
 
         if (context.AuthContext.IsAuthenticated)
         {

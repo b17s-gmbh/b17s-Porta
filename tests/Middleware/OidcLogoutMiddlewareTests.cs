@@ -43,6 +43,130 @@ public class OidcLogoutMiddlewareTests
         Assert.True(fakeAuth.SignOutCalls > 0);
     }
 
+    // Absolute-URI branch of IsValidRedirectUri: same-origin match, https
+    // requirement, allow-list matching, and localhost opt-in. The adversarial
+    // variants pin that authority spoofing (userinfo trick, suffix attack) and
+    // whitespace-prefixed absolute URIs cannot escape to an attacker origin.
+
+    [Fact]
+    public async Task InvokeAsync_AbsoluteSameOriginHttpsRedirect_IsAccepted()
+    {
+        var (middleware, httpContext, fakeAuth, revocation) = CreateScenario(
+            "https://app.example.com/landed", authenticated: true, returnJson: true,
+            requestHost: "app.example.com");
+
+        await middleware.InvokeAsync(httpContext, revocation);
+
+        Assert.Equal(200, httpContext.Response.StatusCode);
+        Assert.True(fakeAuth.SignOutCalls > 0);
+    }
+
+    [Theory]
+    // Userinfo trick: the real authority is evil.com; "app.example.com" is userinfo.
+    [InlineData("https://app.example.com@evil.com/")]
+    // Suffix attack: allow-listed name as a leading label of an attacker domain.
+    [InlineData("https://app.example.com.evil.com/")]
+    // Subdomain walk: allow-list entries are exact hosts, not suffix patterns.
+    [InlineData("https://sub.app.example.com/")]
+    // Whitespace/control-char prefixes: .NET's Uri parser trims them, so the value
+    // still parses absolute - the host comparison must reject the foreign origin.
+    [InlineData(" https://evil.com/")]
+    [InlineData("\thttps://evil.com/")]
+    public async Task InvokeAsync_AuthoritySpoofedAbsoluteRedirect_Returns400(string redirectUri)
+    {
+        var (middleware, httpContext, fakeAuth, revocation) = CreateScenario(
+            redirectUri, authenticated: true, returnJson: true,
+            requestHost: "app.example.com",
+            allowedRedirectHosts: ["app.example.com"]);
+
+        await middleware.InvokeAsync(httpContext, revocation);
+
+        Assert.Equal(400, httpContext.Response.StatusCode);
+        Assert.Equal(0, fakeAuth.SignOutCalls);
+        Assert.Equal(0, revocation.Calls);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_PlainHttpAbsoluteRedirect_Returns400_EvenWhenSameOrigin()
+    {
+        var (middleware, httpContext, fakeAuth, revocation) = CreateScenario(
+            "http://app.example.com/landed", authenticated: true, returnJson: true,
+            requestHost: "app.example.com",
+            allowedRedirectHosts: ["app.example.com"]);
+
+        await middleware.InvokeAsync(httpContext, revocation);
+
+        Assert.Equal(400, httpContext.Response.StatusCode);
+        Assert.Equal(0, fakeAuth.SignOutCalls);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_AllowListedCrossOriginRedirect_IsAccepted()
+    {
+        var (middleware, httpContext, fakeAuth, revocation) = CreateScenario(
+            "https://other.example.com/landed", authenticated: true, returnJson: true,
+            requestHost: "app.example.com",
+            allowedRedirectHosts: ["other.example.com"]);
+
+        await middleware.InvokeAsync(httpContext, revocation);
+
+        Assert.Equal(200, httpContext.Response.StatusCode);
+        Assert.True(fakeAuth.SignOutCalls > 0);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_CrossOriginRedirectNotInAllowList_Returns400()
+    {
+        var (middleware, httpContext, fakeAuth, revocation) = CreateScenario(
+            "https://elsewhere.example.com/", authenticated: true, returnJson: true,
+            requestHost: "app.example.com",
+            allowedRedirectHosts: ["other.example.com"]);
+
+        await middleware.InvokeAsync(httpContext, revocation);
+
+        Assert.Equal(400, httpContext.Response.StatusCode);
+        Assert.Equal(0, fakeAuth.SignOutCalls);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_LoopbackRedirect_AcceptedOnlyWithAllowLocalhostOptIn()
+    {
+        var (accepting, acceptingContext, acceptingAuth, acceptingRevocation) = CreateScenario(
+            "http://localhost:5001/cb", authenticated: true, returnJson: true,
+            requestHost: "app.example.com", allowLocalhost: true);
+
+        await accepting.InvokeAsync(acceptingContext, acceptingRevocation);
+
+        Assert.Equal(200, acceptingContext.Response.StatusCode);
+        Assert.True(acceptingAuth.SignOutCalls > 0);
+
+        var (rejecting, rejectingContext, rejectingAuth, rejectingRevocation) = CreateScenario(
+            "http://localhost:5001/cb", authenticated: true, returnJson: true,
+            requestHost: "app.example.com", allowLocalhost: false);
+
+        await rejecting.InvokeAsync(rejectingContext, rejectingRevocation);
+
+        Assert.Equal(400, rejectingContext.Response.StatusCode);
+        Assert.Equal(0, rejectingAuth.SignOutCalls);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_LoopbackRedirect_RejectedWhenAllowListConfiguredWithoutLoopbackEntry()
+    {
+        // With a non-empty allow-list, the allow-list owns the decision: AllowLocalhost
+        // does not re-admit loopback hosts that the operator didn't list.
+        var (middleware, httpContext, fakeAuth, revocation) = CreateScenario(
+            "http://localhost:5001/cb", authenticated: true, returnJson: true,
+            requestHost: "app.example.com",
+            allowedRedirectHosts: ["other.example.com"],
+            allowLocalhost: true);
+
+        await middleware.InvokeAsync(httpContext, revocation);
+
+        Assert.Equal(400, httpContext.Response.StatusCode);
+        Assert.Equal(0, fakeAuth.SignOutCalls);
+    }
+
     [Fact]
     public async Task InvokeAsync_Unauthenticated_Returns401()
     {
@@ -336,7 +460,10 @@ public class OidcLogoutMiddlewareTests
         bool authenticated,
         bool returnJson,
         bool performGlobalLogout = true,
-        string method = "POST")
+        string method = "POST",
+        string? requestHost = null,
+        List<string>? allowedRedirectHosts = null,
+        bool allowLocalhost = false)
     {
         var fakeAuth = new FakeAuthService(authenticated, refreshToken: "rt-1");
         var revocation = new RecordingRevocationService();
@@ -349,6 +476,8 @@ public class OidcLogoutMiddlewareTests
             ReturnJson = returnJson,
             PerformGlobalLogout = performGlobalLogout,
             DefaultRedirectUri = "/",
+            AllowedRedirectHosts = allowedRedirectHosts ?? [],
+            AllowLocalhost = allowLocalhost,
             // Antiforgery enforcement has its own dedicated tests; existing
             // scenarios exercise redirect / auth / method axes only.
             RequireAntiforgery = false,
@@ -363,6 +492,10 @@ public class OidcLogoutMiddlewareTests
             method: method,
             path: "/bff/logout",
             queryString: new Dictionary<string, string> { ["redirect_uri"] = redirectUri });
+        if (requestHost is not null)
+        {
+            httpContext.Request.Host = HostString.FromUriComponent(requestHost);
+        }
         httpContext.RequestServices = services.BuildServiceProvider();
 
         return (middleware, httpContext, fakeAuth, revocation);

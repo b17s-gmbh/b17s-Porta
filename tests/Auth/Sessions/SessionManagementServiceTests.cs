@@ -423,6 +423,123 @@ public class SessionManagementServiceTests
         Assert.Equal(expected, cache.LastSetOptions["porta:email_sessions:user@example.com"].SlidingExpiration);
     }
 
+    [Fact]
+    public async Task GetSessionsByEmailAsync_ReturnsAllLiveSessionsForEmail_AndOnlyThose()
+    {
+        var (svc, _) = CreateService();
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "alice@example.com");
+        await svc.RegisterSessionAsync("sid-2", userId: "user-2", email: "alice@example.com");
+        await svc.RegisterSessionAsync("sid-3", userId: "user-3", email: "bob@example.com");
+
+        var sessions = await svc.GetSessionsByEmailAsync("alice@example.com", TestContext.Current.CancellationToken);
+
+        Assert.Equal(["sid-1", "sid-2"], sessions.Select(s => s.SessionId).Order().ToArray());
+        Assert.All(sessions, s => Assert.Equal("alice@example.com", s.Email));
+    }
+
+    [Fact]
+    public async Task GetSessionsByEmailAsync_NormalizesCasing_OnRegistrationAndLookup()
+    {
+        var (svc, _) = CreateService();
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "Alice@Example.COM");
+
+        var sessions = await svc.GetSessionsByEmailAsync("ALICE@example.com", TestContext.Current.CancellationToken);
+
+        var session = Assert.Single(sessions);
+        Assert.Equal("alice@example.com", session.Email);
+    }
+
+    [Fact]
+    public async Task GetSessionsByEmailAsync_EmptyOrUnknownEmail_ReturnsEmpty()
+    {
+        var (svc, _) = CreateService();
+
+        Assert.Empty(await svc.GetSessionsByEmailAsync(string.Empty, TestContext.Current.CancellationToken));
+        Assert.Empty(await svc.GetSessionsByEmailAsync("nobody@example.com", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task TerminateSessionsByEmailAsync_TerminatesEverySession_AndCleansAllIndexes()
+    {
+        var (svc, cache) = CreateService();
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "alice@example.com");
+        await svc.RegisterSessionAsync("sid-2", userId: "user-2", email: "alice@example.com");
+        await svc.RegisterSessionAsync("sid-3", userId: "user-3", email: "bob@example.com");
+
+        var count = await svc.TerminateSessionsByEmailAsync("alice@example.com", revokeTokens: false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, count);
+        // Metadata, the email index, and both subject indexes are gone...
+        Assert.Null(await cache.GetStringAsync(MetadataPrefix + "sid-1", TestContext.Current.CancellationToken));
+        Assert.Null(await cache.GetStringAsync(MetadataPrefix + "sid-2", TestContext.Current.CancellationToken));
+        Assert.Null(await cache.GetStringAsync("porta:email_sessions:alice@example.com", TestContext.Current.CancellationToken));
+        Assert.Null(await cache.GetStringAsync("porta:sub_sessions:user-1", TestContext.Current.CancellationToken));
+        Assert.Null(await cache.GetStringAsync("porta:sub_sessions:user-2", TestContext.Current.CancellationToken));
+        // ...while the other user's session is untouched.
+        Assert.Single(await svc.GetSessionsByEmailAsync("bob@example.com", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task TerminateSessionsByEmailAsync_AcceptsAnyCasing()
+    {
+        var (svc, _) = CreateService();
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "alice@example.com");
+
+        var count = await svc.TerminateSessionsByEmailAsync("ALICE@Example.com", revokeTokens: false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, count);
+        Assert.Empty(await svc.GetSessionsByEmailAsync("alice@example.com", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task TerminateSessionsByEmailAsync_RevokesEachSessionsRefreshToken()
+    {
+        var (svc, _, revocation) = CreateServiceWithRevocation();
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "alice@example.com", encryptedRefreshToken: svc.ProtectRefreshToken("rt-1"));
+        await svc.RegisterSessionAsync("sid-2", userId: "user-1", email: "alice@example.com", encryptedRefreshToken: svc.ProtectRefreshToken("rt-2"));
+
+        var count = await svc.TerminateSessionsByEmailAsync("alice@example.com", revokeTokens: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, count);
+        Assert.Equal(2, revocation.Calls);
+    }
+
+    [Fact]
+    public async Task TerminateSessionsByEmailAsync_EmptyOrUnknownEmail_ReturnsZero()
+    {
+        var (svc, _) = CreateService();
+
+        Assert.Equal(0, await svc.TerminateSessionsByEmailAsync(string.Empty, revokeTokens: false, TestContext.Current.CancellationToken));
+        Assert.Equal(0, await svc.TerminateSessionsByEmailAsync("nobody@example.com", revokeTokens: false, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task TerminateSessionsBySubjectAsync_TerminatesEverySessionForSubject_AndRevokesTokens()
+    {
+        var (svc, cache, revocation) = CreateServiceWithRevocation();
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "alice@example.com", encryptedRefreshToken: svc.ProtectRefreshToken("rt-1"));
+        await svc.RegisterSessionAsync("sid-2", userId: "user-1", encryptedRefreshToken: svc.ProtectRefreshToken("rt-2"));
+        await svc.RegisterSessionAsync("sid-3", userId: "user-2", email: "alice@example.com");
+
+        var count = await svc.TerminateSessionsBySubjectAsync("user-1", revokeTokens: true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, count);
+        Assert.Equal(2, revocation.Calls);
+        Assert.Null(await cache.GetStringAsync("porta:sub_sessions:user-1", TestContext.Current.CancellationToken));
+        // The terminations also pruned the shared email index, leaving only user-2's session.
+        var remaining = await svc.GetSessionsByEmailAsync("alice@example.com", TestContext.Current.CancellationToken);
+        Assert.Equal("sid-3", Assert.Single(remaining).SessionId);
+    }
+
+    [Fact]
+    public async Task TerminateSessionsBySubjectAsync_EmptyOrUnknownSubject_ReturnsZero()
+    {
+        var (svc, _) = CreateService();
+
+        Assert.Equal(0, await svc.TerminateSessionsBySubjectAsync(string.Empty, revokeTokens: false, TestContext.Current.CancellationToken));
+        Assert.Equal(0, await svc.TerminateSessionsBySubjectAsync("ghost", revokeTokens: false, TestContext.Current.CancellationToken));
+    }
+
     private sealed class SetOptionsRecordingCache(IDistributedCache inner) : IDistributedCache
     {
         public Dictionary<string, DistributedCacheEntryOptions> LastSetOptions { get; } = [];

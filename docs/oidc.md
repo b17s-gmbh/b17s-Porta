@@ -302,7 +302,7 @@ By default, ASP.NET Core's cookie auth handler stores tokens in the cookie itsel
 
 - Cookie carries only an opaque ticket id (~32 bytes): the IdP-issued `sid` claim when present, otherwise a generated `Guid.NewGuid("N")`.
 - The actual `AuthenticationTicket` (with tokens) is serialized via `TicketSerializer.Default`, encrypted via `IDataProtector` with purpose `"Porta.AuthTickets.v1"`, and written to `IDistributedCache` under `porta:auth_ticket:{id}`.
-- Sliding expiration matches `SessionAuthentication:SessionTimeoutInMin`.
+- The cache entry expires when the cookie ticket expires: its absolute expiration is the ticket's stamped `ExpiresUtc` (driven by `Cookie.ExpireTimeSpanMinutes`, re-stamped on each sliding renewal when `SlidingExpiration` is enabled). `SessionTimeoutInMin` does **not** control the ticket TTL - see [Session timeouts](configuration.md#session-timeouts---sessiontimeoutinmin-vs-cookieexpiretimespanminutes).
 
 **Cache eviction effectively logs the user out** (the cookie's ticket id no longer resolves). Acceptable for a session store. If you need stronger guarantees, use Redis with persistence and capacity headroom.
 

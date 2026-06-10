@@ -286,41 +286,50 @@ public sealed class SessionKeyConfiguration
     /// <summary>
     /// Gets the full session key with prefix.
     /// </summary>
+    /// <param name="key">The unprefixed key name (e.g. one of the <c>*Key</c> properties)</param>
+    /// <returns>The session key in the form <c>{Prefix}.{key}</c></returns>
     public string GetFullKey(string key) => $"{Prefix}.{key}";
 
     /// <summary>
     /// Gets the full access token key.
     /// </summary>
+    /// <returns>The prefixed session key for <see cref="AccessTokenKey"/></returns>
     public string GetAccessTokenKey() => GetFullKey(AccessTokenKey);
 
     /// <summary>
     /// Gets the full ID token key.
     /// </summary>
+    /// <returns>The prefixed session key for <see cref="IdTokenKey"/></returns>
     public string GetIdTokenKey() => GetFullKey(IdTokenKey);
 
     /// <summary>
     /// Gets the full refresh token key.
     /// </summary>
+    /// <returns>The prefixed session key for <see cref="RefreshTokenKey"/></returns>
     public string GetRefreshTokenKey() => GetFullKey(RefreshTokenKey);
 
     /// <summary>
     /// Gets the full expires at key.
     /// </summary>
+    /// <returns>The prefixed session key for <see cref="ExpiresAtKey"/></returns>
     public string GetExpiresAtKey() => GetFullKey(ExpiresAtKey);
 
     /// <summary>
     /// Gets the full API access token key.
     /// </summary>
+    /// <returns>The prefixed session key for <see cref="ApiAccessTokenKey"/></returns>
     public string GetApiAccessTokenKey() => GetFullKey(ApiAccessTokenKey);
 
     /// <summary>
     /// Gets the full user prefix.
     /// </summary>
+    /// <returns>The prefixed key namespace for <see cref="UserPrefix"/></returns>
     public string GetUserPrefix() => GetFullKey(UserPrefix);
 
     /// <summary>
     /// Gets the full auth context key.
     /// </summary>
+    /// <returns>The prefixed session key for <see cref="AuthContextKey"/></returns>
     public string GetAuthContextKey() => GetFullKey(AuthContextKey);
 
     /// <summary>

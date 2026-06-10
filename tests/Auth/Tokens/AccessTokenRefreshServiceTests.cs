@@ -394,6 +394,200 @@ public class AccessTokenRefreshServiceTests
         Assert.DoesNotContain("bff-session-secret-1234", lockSpy.LastKey);
     }
 
+    // ForceRefreshAsync is the refresh-on-401 retry path: callers hand in the token that
+    // just got rejected and expect either a rotated token, the current token (when refresh
+    // isn't possible right now), or null (when the session is dead and no retry can help).
+
+    [Fact]
+    public async Task ForceRefreshAsync_Unauthenticated_ReturnsNull()
+    {
+        using var ctx = new TestContext { Authenticated = false };
+
+        var token = await ctx.Service.ForceRefreshAsync(ctx.HttpContext);
+
+        Assert.Null(token);
+        Assert.Equal(0, ctx.RefreshCalls);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAsync_NoRefreshToken_ReturnsCurrentAccessTokenWithoutRefresh()
+    {
+        using var ctx = new TestContext
+        {
+            AccessToken = "current-access",
+            RefreshToken = null,
+        };
+
+        var token = await ctx.Service.ForceRefreshAsync(ctx.HttpContext);
+
+        Assert.Equal("current-access", token);
+        Assert.Equal(0, ctx.RefreshCalls);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAsync_RefreshesEvenWhenNotNearExpiry_AndReturnsRotatedToken()
+    {
+        // Force-refresh is the 401-retry path: the resource server already rejected the
+        // token, so expiry-based skew must not gate the refresh.
+        using var ctx = new TestContext
+        {
+            AccessToken = "rejected-access",
+            RefreshToken = "rt",
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30),
+            RefreshResult = new TokenExchangeResponse
+            {
+                AccessToken = "new-access",
+                RefreshToken = "new-rt",
+                ExpiresIn = 3600,
+                TokenType = "Bearer",
+            },
+        };
+
+        var token = await ctx.Service.ForceRefreshAsync(ctx.HttpContext, staleAccessToken: "rejected-access");
+
+        Assert.Equal("new-access", token);
+        Assert.Equal(1, ctx.RefreshCalls);
+        Assert.Equal(1, ctx.SignInCalls);
+        Assert.Equal(1, ctx.ApiTokenInvalidationCalls);
+        Assert.Equal("new-access", ctx.LastSignedInProperties?.GetTokenValue("access_token"));
+    }
+
+    [Fact]
+    public async Task ForceRefreshAsync_TokenAlreadyRotatedUnderLock_ReturnsRotatedTokenWithoutIdpRoundTrip()
+    {
+        // A concurrent request may have rotated the token between the caller's 401 and
+        // this lock acquisition. The re-read under the lock must detect the change and
+        // skip a second IdP round-trip.
+        using var ctx = new TestContext
+        {
+            AccessToken = "already-rotated",
+            RefreshToken = "rt",
+        };
+
+        var token = await ctx.Service.ForceRefreshAsync(ctx.HttpContext, staleAccessToken: "rejected-access");
+
+        Assert.Equal("already-rotated", token);
+        Assert.Equal(0, ctx.RefreshCalls);
+        Assert.Equal(0, ctx.SignInCalls);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAsync_LockTimeout_ReturnsCurrentTokenWithoutRefresh()
+    {
+        // Lock-timeout → serve-stale fallback: when the per-user lock cannot be acquired
+        // the caller gets the current token back rather than an error - another request
+        // is presumably mid-refresh and the retry will pick up its result.
+        using var ctx = new TestContext(new NotAcquiredRefreshLock())
+        {
+            AccessToken = "current-access",
+            RefreshToken = "rt",
+        };
+
+        var token = await ctx.Service.ForceRefreshAsync(ctx.HttpContext, staleAccessToken: "current-access");
+
+        Assert.Equal("current-access", token);
+        Assert.Equal(0, ctx.RefreshCalls);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAsync_InvalidGrant_SignsOutAndReturnsNull()
+    {
+        // invalid_grant means the session is dead; null tells the caller's refresh-on-401
+        // retry there is no token worth re-sending.
+        using var ctx = new TestContext
+        {
+            AccessToken = "rejected-access",
+            RefreshToken = "rt",
+            RefreshResult = null,
+            RefreshFailure = RefreshFailureReason.InvalidGrant,
+        };
+
+        var token = await ctx.Service.ForceRefreshAsync(ctx.HttpContext, staleAccessToken: "rejected-access");
+
+        Assert.Null(token);
+        Assert.Equal(1, ctx.SignOutCalls);
+        Assert.Equal(1, ctx.ApiTokenInvalidationCalls);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAsync_TransientFailure_ReturnsStaleToken()
+    {
+        using var ctx = new TestContext
+        {
+            AccessToken = "rejected-access",
+            RefreshToken = "rt",
+            RefreshResult = null,
+            RefreshFailure = RefreshFailureReason.Transient,
+        };
+
+        var token = await ctx.Service.ForceRefreshAsync(ctx.HttpContext, staleAccessToken: "rejected-access");
+
+        Assert.Equal("rejected-access", token);
+        Assert.Equal(1, ctx.RefreshCalls);
+        Assert.Equal(0, ctx.SignOutCalls);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAsync_RefreshThrowsNonCancellation_ReturnsStaleToken()
+    {
+        using var ctx = new TestContext(new RecordingRefreshLock())
+        {
+            AccessToken = "rejected-access",
+            RefreshToken = "rt",
+            RefreshThrows = new InvalidOperationException("boom"),
+        };
+
+        var token = await ctx.Service.ForceRefreshAsync(ctx.HttpContext, staleAccessToken: "rejected-access");
+
+        Assert.Equal("rejected-access", token);
+    }
+
+    [Fact]
+    public async Task ForceRefreshAsync_RefreshCanceled_PropagatesCancellation()
+    {
+        // Mirrors the GetAccessTokenAsync contract: a client disconnect mid-refresh must
+        // surface as cancellation, not be swallowed into "serve the stale token".
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        using var ctx = new TestContext(new RecordingRefreshLock())
+        {
+            AccessToken = "rejected-access",
+            RefreshToken = "rt",
+            RefreshThrows = new OperationCanceledException(),
+        };
+        ctx.HttpContext.RequestAborted = cts.Token;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => ctx.Service.ForceRefreshAsync(ctx.HttpContext, staleAccessToken: "rejected-access"));
+    }
+
+    [Fact]
+    public async Task GetAccessTokenAsync_LockTimeout_ServesStaleTokenWithoutRefresh()
+    {
+        // Same serve-stale fallback on the request-driven path: a near-expiry token whose
+        // refresh lock is held elsewhere is returned as-is instead of blocking or failing.
+        using var ctx = new TestContext(new NotAcquiredRefreshLock())
+        {
+            AccessToken = "stale-access",
+            RefreshToken = "rt",
+            ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(5),
+        };
+
+        var result = await ctx.Service.GetAccessTokenAsync(ctx.HttpContext);
+
+        Assert.Equal("stale-access", result.AccessToken);
+        Assert.False(result.SessionTerminated);
+        Assert.Equal(0, ctx.RefreshCalls);
+        Assert.Equal(0, ctx.SignInCalls);
+    }
+
+    /// <summary>Simulates a lock-acquisition timeout: every acquire reports not acquired.</summary>
+    private sealed class NotAcquiredRefreshLock : IRefreshLock
+    {
+        public Task<RefreshLockHandle> AcquireAsync(string lockKey, TimeSpan timeout, CancellationToken cancellationToken = default)
+            => Task.FromResult(RefreshLockHandle.NotAcquired);
+    }
+
     /// <summary>Captures the key handed to the refresh lock; reports the lock as acquired.</summary>
     private sealed class RecordingRefreshLock : IRefreshLock
     {

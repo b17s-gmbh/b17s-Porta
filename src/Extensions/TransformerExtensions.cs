@@ -281,12 +281,14 @@ public static class PassThroughExtensions
     /// <param name="endpoints">The endpoint route builder</param>
     /// <returns>A fluent builder for configuring the pass-through endpoint</returns>
     /// <example>
+    /// <code>
     /// // Zero-code endpoint - no transformer class needed!
     /// app.MapPassThrough&lt;ProductsResponse&gt;()
     ///     .FromRoute("GET", "/api/products")
     ///     .ToBackend("GET", $"{backendUrl}/products")
     ///     .WithBackendAuth(BackendAuthPolicies.BasicAuth)
     ///     .Build();
+    /// </code>
     /// </example>
     public static PassThroughEndpointBuilder<TResponse> MapPassThrough<TResponse>(this IEndpointRouteBuilder endpoints)
     {
@@ -305,10 +307,12 @@ public static class PassThroughExtensions
     /// <param name="routePattern">The route pattern</param>
     /// <returns>A fluent builder for configuring the pass-through endpoint</returns>
     /// <example>
+    /// <code>
     /// app.MapPassThrough&lt;ProductsResponse&gt;("GET", "/api/products")
     ///     .ToBackend("GET", $"{backendUrl}/products")
     ///     .WithBackendAuth(BackendAuthPolicies.BasicAuth)
     ///     .Build();
+    /// </code>
     /// </example>
     public static PassThroughEndpointBuilder<TResponse> MapPassThrough<TResponse>(
         this IEndpointRouteBuilder endpoints,

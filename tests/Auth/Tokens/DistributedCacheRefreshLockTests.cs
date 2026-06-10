@@ -146,6 +146,70 @@ public class DistributedCacheRefreshLockTests
         Assert.Null(raw);
     }
 
+    // TTL expiry semantics: the 30s lock TTL bounds how long a crashed acquirer
+    // (one that never disposes its handle) can block other replicas. Driven by a
+    // fake clock shared between the lock and the cache so no real time passes.
+    // A zero acquire timeout makes the waiter probe exactly once and give up,
+    // keeping the test off the real-time backoff path.
+
+    [Fact]
+    public async Task AcquireAsync_HolderCrashed_LockStillHeldBeforeTtlExpires()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 20, 12, 0, 0, TimeSpan.Zero));
+        var cache = new InMemoryDistributedCache { Clock = clock };
+        var sut = new DistributedCacheRefreshLock(cache, clock);
+
+        var crashed = await sut.AcquireAsync("user-1", TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        Assert.True(crashed.Acquired);
+        // Never disposed - simulates a holder that died mid-refresh.
+
+        clock.Advance(TimeSpan.FromSeconds(29));
+        var contender = await sut.AcquireAsync("user-1", TimeSpan.Zero, TestContext.Current.CancellationToken);
+
+        Assert.False(contender.Acquired);
+    }
+
+    [Fact]
+    public async Task AcquireAsync_HolderCrashed_LockSelfEvictsAfterTtl()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 20, 12, 0, 0, TimeSpan.Zero));
+        var cache = new InMemoryDistributedCache { Clock = clock };
+        var sut = new DistributedCacheRefreshLock(cache, clock);
+
+        var crashed = await sut.AcquireAsync("user-1", TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        Assert.True(crashed.Acquired);
+
+        clock.Advance(TimeSpan.FromSeconds(31));
+        await using var contender = await sut.AcquireAsync("user-1", TimeSpan.Zero, TestContext.Current.CancellationToken);
+
+        Assert.True(contender.Acquired);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_AfterTtlExpiryAndReacquire_DoesNotEvictNewHoldersLock()
+    {
+        // The compare-and-delete release must hold under natural TTL expiry, not just
+        // manual eviction: a delayed disposer whose entry expired and was re-acquired
+        // by another replica must leave the new holder's lock in place.
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 20, 12, 0, 0, TimeSpan.Zero));
+        var cache = new InMemoryDistributedCache { Clock = clock };
+        var sut = new DistributedCacheRefreshLock(cache, clock);
+
+        var stale = await sut.AcquireAsync("user-1", TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        Assert.True(stale.Acquired);
+
+        clock.Advance(TimeSpan.FromSeconds(31));
+        var current = await sut.AcquireAsync("user-1", TimeSpan.Zero, TestContext.Current.CancellationToken);
+        Assert.True(current.Acquired);
+
+        await stale.DisposeAsync();
+
+        var raw = await cache.GetAsync("porta:refresh-lock:user-1", TestContext.Current.CancellationToken);
+        Assert.NotNull(raw);
+
+        await current.DisposeAsync();
+    }
+
     [Fact]
     public async Task DisposeAsync_WhenCacheThrowsOnRelease_DoesNotThrow()
     {
@@ -163,12 +227,28 @@ public class DistributedCacheRefreshLockTests
 
     private sealed class InMemoryDistributedCache : IDistributedCache
     {
-        private readonly ConcurrentDictionary<string, byte[]> _store = new();
+        private readonly ConcurrentDictionary<string, (byte[] Value, DateTimeOffset? ExpiresAt)> _store = new();
 
         public bool ThrowOnAccess { get; set; }
         public Action? OnAccess { get; set; }
 
-        public byte[]? Get(string key) => _store.TryGetValue(key, out var v) ? v : null;
+        // Clock used for expiry checks; share the lock's FakeTimeProvider so TTL
+        // expiry and the acquire deadline advance together.
+        public TimeProvider Clock { get; set; } = TimeProvider.System;
+
+        public byte[]? Get(string key)
+        {
+            if (!_store.TryGetValue(key, out var entry))
+            {
+                return null;
+            }
+            if (entry.ExpiresAt is { } expiresAt && Clock.GetUtcNow() >= expiresAt)
+            {
+                _store.TryRemove(key, out _);
+                return null;
+            }
+            return entry.Value;
+        }
         public Task<byte[]?> GetAsync(string key, CancellationToken token = default)
         {
             Touch(token);
@@ -183,7 +263,15 @@ public class DistributedCacheRefreshLockTests
             Remove(key);
             return Task.CompletedTask;
         }
-        public void Set(string key, byte[] value, DistributedCacheEntryOptions options) => _store[key] = value;
+        public void Set(string key, byte[] value, DistributedCacheEntryOptions options)
+        {
+            // Honor the TTL options the SUT passes (AbsoluteExpirationRelativeToNow for the
+            // lock TTL); a fake that ignores them silently un-tests expiry semantics.
+            DateTimeOffset? expiresAt = options.AbsoluteExpirationRelativeToNow is { } relative
+                ? Clock.GetUtcNow() + relative
+                : options.AbsoluteExpiration;
+            _store[key] = (value, expiresAt);
+        }
         public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)
         {
             Touch(token);
@@ -200,5 +288,16 @@ public class DistributedCacheRefreshLockTests
                 throw new InvalidOperationException("cache unavailable");
             }
         }
+    }
+
+    /// <summary>
+    /// Minimal mutable TimeProvider that lets tests advance the clock without sleeping.
+    /// Mirrors the pattern used by RefreshLockRegistryTests.
+    /// </summary>
+    private sealed class FakeTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        private DateTimeOffset _now = now;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan by) => _now = _now.Add(by);
     }
 }

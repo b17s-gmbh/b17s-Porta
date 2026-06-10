@@ -78,7 +78,7 @@ public interface ITransformer<TRequest, TResponse> : ITransformer
     /// <summary>
     /// Transforms an incoming request and forwards it to the backend service.
     /// </summary>
-    /// <param name="request">The deserialized request body (null for GET/DELETE)</param>
+    /// <param name="request">The deserialized request body, or <see langword="null"/> when the incoming request carried no JSON body</param>
     /// <param name="context">Context containing auth info, HTTP context, and backend caller</param>
     /// <returns>The transformed response from the backend</returns>
     Task<TResponse> TransformAsync(TRequest? request, TransformerContext context);

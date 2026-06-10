@@ -59,6 +59,10 @@ public static class AuthenticationServiceExtensions
     /// through the options pipeline but registers the authentication schemes and
     /// services only once.
     /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <param name="configuration">The configuration root to bind <see cref="SessionAuthenticationConfiguration"/> from</param>
+    /// <param name="configSectionName">Name of the configuration section to bind. Defaults to <c>"SessionAuthentication"</c></param>
+    /// <returns>The service collection for chaining</returns>
     public static IServiceCollection AddPortaAuthentication(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -84,6 +88,9 @@ public static class AuthenticationServiceExtensions
     /// No registration-time snapshot is captured, so external
     /// <c>Configure&lt;T&gt;</c>/<c>PostConfigure&lt;T&gt;</c> composition is honored everywhere.
     /// </remarks>
+    /// <param name="services">The service collection</param>
+    /// <param name="configureOptions">Optional action to configure <see cref="SessionAuthenticationConfiguration"/>; pass <see langword="null"/> when options are bound elsewhere</param>
+    /// <returns>The service collection for chaining</returns>
     public static IServiceCollection AddPortaAuthentication(
         this IServiceCollection services,
         Action<SessionAuthenticationConfiguration>? configureOptions = null)

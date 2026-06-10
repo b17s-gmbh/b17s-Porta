@@ -439,6 +439,8 @@ public static class OidcEndpointServiceExtensions
     /// This is automatically called by AddPortaOidcAuth(), so you only need to call this
     /// if you're using a custom authentication provider but still want the OIDC endpoints.
     /// </remarks>
+    /// <param name="services">The service collection</param>
+    /// <returns>The service collection for chaining</returns>
     public static IServiceCollection AddOidcEndpoints(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);

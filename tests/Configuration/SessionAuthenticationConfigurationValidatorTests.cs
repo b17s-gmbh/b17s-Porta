@@ -6,9 +6,11 @@ namespace b17s.Porta.Tests.Configuration;
 
 /// <summary>
 /// Regression tests for the option validator that gates session-auth startup.
-/// Covers the SameSite=None &rArr; SecurePolicy=Always cross-field rule: browsers
-/// silently drop SameSite=None cookies that are not Secure, and HTTP downgrade
-/// would expose the cookie if SecurePolicy were SameAsRequest or None.
+/// Covers required-field and range checks (Authority, ClientId, ClientSecret,
+/// timeouts, key lifetime) plus the SameSite=None &rArr; SecurePolicy=Always
+/// cross-field rule: browsers silently drop SameSite=None cookies that are not
+/// Secure, and HTTP downgrade would expose the cookie if SecurePolicy were
+/// SameAsRequest or None.
 /// </summary>
 public class SessionAuthenticationConfigurationValidatorTests
 {
@@ -167,6 +169,198 @@ public class SessionAuthenticationConfigurationValidatorTests
         var result = Validate(options);
 
         Assert.True(result.Succeeded, string.Join("; ", result.Failures ?? []));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void MissingAuthority_Fails(string? authority)
+    {
+        var options = ValidBaseline();
+        options.Authority = authority!;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("Authority is required", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("not a url")]
+    [InlineData("idp.example.com")]
+    [InlineData("ftp://idp.example.com")]
+    public void MalformedAuthority_Fails(string authority)
+    {
+        // The malformed branch is distinct from the required branch: a present but
+        // unparseable (or non-http) value must name the offending input so the
+        // operator can spot the typo in config.
+        var options = ValidBaseline();
+        options.Authority = authority;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("absolute http(s) URL", StringComparison.Ordinal)
+                && f.Contains($"'{authority}'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HttpAuthority_IsAccepted()
+    {
+        // Plain http is parseable and allowed here; requiring HTTPS is governed
+        // separately by RequireHttpsMetadata, not by this validator.
+        var options = ValidBaseline();
+        options.Authority = "http://localhost:8080/realms/dev";
+
+        var result = Validate(options);
+
+        Assert.True(result.Succeeded, string.Join("; ", result.Failures ?? []));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void MissingClientId_Fails(string? clientId)
+    {
+        var options = ValidBaseline();
+        options.ClientId = clientId!;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("ClientId is required", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void MissingClientSecret_Fails(string? clientSecret)
+    {
+        var options = ValidBaseline();
+        options.ClientSecret = clientSecret!;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("ClientSecret is required", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void NonPositiveSessionTimeout_Fails(int minutes)
+    {
+        var options = ValidBaseline();
+        options.SessionTimeoutInMin = minutes;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("SessionTimeoutInMin must be > 0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NullCookie_Fails()
+    {
+        // The property is non-nullable with a default, but configuration binding
+        // can still null it out - the validator must catch that instead of letting
+        // cookie setup NRE later.
+        var options = ValidBaseline();
+        options.Cookie = null!;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("Cookie must be set", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void NullDataProtection_Fails()
+    {
+        var options = ValidBaseline();
+        options.DataProtection = null!;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("DataProtection must be set", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void InvalidSecurePolicyValue_Fails()
+    {
+        var options = ValidBaseline();
+        options.Cookie.SecurePolicy = "bogus";
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("SecurePolicy 'bogus'", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void NonPositiveCookieExpireTimeSpan_Fails(int minutes)
+    {
+        var options = ValidBaseline();
+        options.Cookie.ExpireTimeSpanMinutes = minutes;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("Cookie.ExpireTimeSpanMinutes must be > 0", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(-1.0)]
+    public void NonPositiveRequestTimeout_Fails(double seconds)
+    {
+        var options = ValidBaseline();
+        options.Resilience.RequestTimeoutSeconds = seconds;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("Resilience.RequestTimeoutSeconds must be > 0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MultipleFailures_AreAllReported()
+    {
+        // The validator accumulates errors instead of failing fast so a fresh
+        // (default-constructed) configuration surfaces every missing required
+        // field in one startup exception.
+        var result = Validate(new SessionAuthenticationConfiguration());
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Failures!, f => f.Contains("Authority is required", StringComparison.Ordinal));
+        Assert.Contains(result.Failures!, f => f.Contains("ClientId is required", StringComparison.Ordinal));
+        Assert.Contains(result.Failures!, f => f.Contains("ClientSecret is required", StringComparison.Ordinal));
     }
 
     [Fact]

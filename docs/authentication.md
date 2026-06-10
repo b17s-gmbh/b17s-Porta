@@ -197,12 +197,9 @@ Register your custom provider:
 // Simple registration
 builder.Services.AddPortaAuthProvider<ApiKeyAuthProvider>();
 
-// Or with factory for complex dependencies
+// Or with factory for explicit construction
 builder.Services.AddPortaAuthProvider<ApiKeyAuthProvider>(sp =>
-    new ApiKeyAuthProvider(
-        sp.GetRequiredService<IApiKeyValidator>(),
-        sp.GetRequiredService<ILogger<ApiKeyAuthProvider>>()
-    ));
+    new ApiKeyAuthProvider(sp.GetRequiredService<IApiKeyValidator>()));
 ```
 
 ### Combining authentication providers
@@ -369,9 +366,6 @@ app.MapTransformer<MyTransformer, MyResponse>()
 ### Per-Backend Modifiers
 
 These chain off each `ToGet/ToPost/...` in the `ToBackends(configure => ...)` builder and apply to the backend they follow (the same names also work as tuple extensions on the array form of `ToBackends`):
-
-| Method | Description |
-|--------|-------------|
 
 | Method | Description |
 |--------|-------------|

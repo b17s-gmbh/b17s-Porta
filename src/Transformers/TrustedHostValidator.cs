@@ -9,7 +9,9 @@ namespace b17s.Porta.Transformers;
 
 /// <summary>
 /// Validates backend URLs against trusted hosts for user token forwarding.
-/// Performs validation at startup time only - no runtime overhead.
+/// Endpoint builders call <see cref="ValidateUrl"/> against configured URL templates at
+/// startup; <see cref="IsTrusted"/> is additionally consulted at request time by the
+/// backend caller before a user-derived token is attached to an outgoing request.
 /// </summary>
 public interface ITrustedHostValidator
 {

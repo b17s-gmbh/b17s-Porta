@@ -178,6 +178,8 @@ To prevent leaking the BFF's session cookie or client credentials to backends, r
 
 Standard hop-by-hop headers (`Connection`, `Host`, `Transfer-Encoding`, etc.) are also stripped. The BFF's session cookie should never reach a backend; the backend should only see access tokens issued via `WithBackendAuth(...)`.
 
+**WebSockets are not proxied.** `Upgrade` and `Connection` are hop-by-hop headers and are stripped (correctly, per RFC 9110 §7.6.1), so a WebSocket handshake arriving at a raw-forward endpoint silently degrades to a plain HTTP exchange - the backend never sees the upgrade request, and the client typically receives a `200`/`426` instead of a `101 Switching Protocols`. If you need WebSocket proxying, route those paths through a dedicated reverse proxy (e.g. YARP) instead of a raw-forward endpoint.
+
 The forwarding-metadata headers (`Forwarded`, `X-Forwarded-*`) are stripped because a client can spoof them: a backend (or its forwarded-header middleware) that trusts them would otherwise see an attacker-chosen client IP, host, or scheme. See [Trusting a Front Reverse Proxy](#trusting-a-front-reverse-proxy) below to relay them when the BFF genuinely sits behind one.
 
 `Content-Length` and `Transfer-Encoding` are additionally stripped from the *outbound request* - `StreamContent` will re-assert the correct framing for the body the BFF actually sends. Carrying the inbound values forward would create a request-smuggling primitive (CL.TE / CL.CL) where the BFF and backend disagree on where the request ends. Response-side `Content-Length` is left intact and flows back to the client normally.
@@ -194,6 +196,8 @@ To bound BFF egress and defeat slow-loris backends, raw-forward responses are su
 - `RawForwardReadIdleTimeout` (default 30s) - maximum time between successive reads. A backend that pauses longer (drip-feeding bytes to pin a worker) gets `504 Backend response stalled`.
 
 Both limits abort mid-stream if they trip after headers have been written, which intentionally tears the connection rather than presenting the client with a silently truncated body.
+
+> **Long-lived streams (SSE, long polling):** the idle timeout applies to *any* streamed response, so a Server-Sent Events stream that goes quiet for more than 30 seconds is torn down with `504 Backend response stalled`. If you forward SSE through a raw-forward endpoint, either raise `RawForwardReadIdleTimeout` above the longest expected gap between events, or have the backend emit periodic keep-alive comments (`: ping\n\n`) inside the timeout window.
 
 ## Backend Error Mapping
 

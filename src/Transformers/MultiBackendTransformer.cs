@@ -56,7 +56,7 @@ public abstract class MultiBackendTransformer<TRequest, TResponse> : Transformer
     /// <typeparam name="TBackendRequest">The backend request type</typeparam>
     /// <typeparam name="TBackendResponse">The backend response type</typeparam>
     /// <param name="endpointName">The name of the backend endpoint (as configured in ToBackends)</param>
-    /// <param name="body">Request body (null for GET/DELETE)</param>
+    /// <param name="body">Request body, or <see langword="null"/> to send the backend call without a body</param>
     /// <param name="context">The transformer context</param>
     /// <param name="routeValues">Optional additional route values for URL interpolation</param>
     /// <param name="cancellationToken">
@@ -163,7 +163,7 @@ public abstract class MultiBackendTransformer<TRequest, TResponse> : Transformer
     /// <typeparam name="TBackendResponse">The backend response type</typeparam>
     /// <param name="method">HTTP method</param>
     /// <param name="url">Backend URL (supports Kubernetes service names)</param>
-    /// <param name="body">Request body (null for GET/DELETE)</param>
+    /// <param name="body">Request body, or <see langword="null"/> to send the backend call without a body</param>
     /// <param name="context">The transformer context</param>
     /// <param name="useTokenExchange">Whether to use token exchange</param>
     /// <param name="audience">Target audience for token exchange</param>
@@ -252,7 +252,7 @@ public abstract class MultiBackendTransformer<TResponse> : TransformerBase<TResp
     /// <typeparam name="TBackendRequest">The backend request type</typeparam>
     /// <typeparam name="TBackendResponse">The backend response type</typeparam>
     /// <param name="endpointName">The name of the backend endpoint (as configured in ToBackends)</param>
-    /// <param name="body">Request body (null for GET/DELETE)</param>
+    /// <param name="body">Request body, or <see langword="null"/> to send the backend call without a body</param>
     /// <param name="context">The transformer context</param>
     /// <param name="routeValues">Optional additional route values for URL interpolation</param>
     /// <param name="cancellationToken">
@@ -359,7 +359,7 @@ public abstract class MultiBackendTransformer<TResponse> : TransformerBase<TResp
     /// <typeparam name="TBackendResponse">The backend response type</typeparam>
     /// <param name="method">HTTP method</param>
     /// <param name="url">Backend URL (supports Kubernetes service names)</param>
-    /// <param name="body">Request body (null for GET/DELETE)</param>
+    /// <param name="body">Request body, or <see langword="null"/> to send the backend call without a body</param>
     /// <param name="context">The transformer context</param>
     /// <param name="useTokenExchange">Whether to use token exchange</param>
     /// <param name="audience">Target audience for token exchange</param>

@@ -94,6 +94,41 @@ public class RedirectUriValidationTests
         Assert.False(RedirectUriValidation.IsSafeRelativeUri(uri));
     }
 
+    // Authority spoofing: host matching must operate on Uri.Host (the real
+    // authority), never on the raw string - otherwise an allow-listed name
+    // smuggled into the userinfo part, a suffix label, or the path would match.
+    [Theory]
+    // Userinfo trick: everything before '@' is userinfo; the real host is evil.com.
+    [InlineData("https://app.example.com@evil.com/", "app.example.com")]
+    [InlineData("https://app.example.com:password@evil.com/", "app.example.com")]
+    // Suffix attack: the allow-listed name is a leading label of an attacker domain.
+    [InlineData("https://app.example.com.evil.com/", "app.example.com")]
+    [InlineData("https://app.example.com.evil.com:8443/", "app.example.com:8443")]
+    // Prefix/subdomain walks: entries are exact hosts, not suffix patterns.
+    [InlineData("https://evil-app.example.com/", "app.example.com")]
+    [InlineData("https://sub.app.example.com/", "app.example.com")]
+    // Allow-listed host in the path, not the authority.
+    [InlineData("https://evil.com/app.example.com", "app.example.com")]
+    public void MatchesAllowedHost_RejectsAuthoritySpoofingVariants(string requestUri, string allowEntry)
+    {
+        var parsed = new Uri(requestUri);
+        Assert.False(RedirectUriValidation.MatchesAllowedHost(parsed, [allowEntry]));
+    }
+
+    // Whitespace/control-char prefixes must not be treated as same-origin
+    // relative paths: anything that does not literally start with '/' is rejected.
+    [Theory]
+    [InlineData(" /dashboard")]
+    [InlineData("\t/dashboard")]
+    [InlineData("\r\n/dashboard")]
+    [InlineData("\u0000/dashboard")]
+    [InlineData(" //evil.com")]
+    [InlineData("\t//evil.com")]
+    public void IsSafeRelativeUri_RejectsWhitespaceAndControlCharPrefixes(string uri)
+    {
+        Assert.False(RedirectUriValidation.IsSafeRelativeUri(uri));
+    }
+
     // AllowLocalhost defaults to false now. The configured-redirect validator
     // must reject a loopback target unless the operator explicitly opts in.
     [Fact]
