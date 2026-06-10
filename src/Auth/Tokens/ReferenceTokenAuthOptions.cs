@@ -11,7 +11,9 @@ public sealed class ReferenceTokenAuthOptions
     public string TokenHeaderName { get; set; } = "Authorization";
 
     /// <summary>
-    /// Token prefix in the header (default: "Bearer ")
+    /// Token prefix in the header (default: "Bearer ").
+    /// Matched case-insensitively (ordinal), since RFC 7235 authentication
+    /// scheme names are case-insensitive.
     /// </summary>
     public string TokenPrefix { get; set; } = "Bearer ";
 

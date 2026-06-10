@@ -114,6 +114,33 @@ public sealed class TokenExchangeServiceTests
     }
 
     [Fact]
+    public async Task ExchangeAsync_EmptyScopeAndAudience_OmitsFormFields()
+    {
+        // RFC 8693 marks scope and audience OPTIONAL; some IdPs reject empty values,
+        // so unconfigured fields must be omitted entirely (not sent as "scope=").
+        var handler = new RecordingHandler(_ => OkExchange());
+        var sut = Build(handler);
+
+        await sut.ExchangeAsync(
+            "user-token",
+            new ApiConfiguration
+            {
+                ApiPath = "/api/x",
+                ApiScopes = "",
+                ApiAudience = "",
+                ClientId = "c",
+                ClientSecret = "s",
+                TokenEndpoint = "https://idp.test/token",
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.NotNull(handler.LastForm);
+        Assert.DoesNotContain("scope", handler.LastForm!.Keys);
+        Assert.DoesNotContain("audience", handler.LastForm.Keys);
+        Assert.Equal("user-token", handler.LastForm["subject_token"]);
+    }
+
+    [Fact]
     public async Task ExchangeAsync_SuccessfulResponse_DeserializesIntoResponse()
     {
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)

@@ -120,6 +120,33 @@ public class DistributedCacheRefreshLockTests
     }
 
     [Fact]
+    public async Task AcquireAsync_CanceledBetweenSetAndVerify_ReleasesOrphanedLock()
+    {
+        // If cancellation hits after the SET landed but before the verify read, the
+        // abandoned entry must be compare-and-deleted - otherwise it blocks every
+        // other replica for the full lock TTL (30s).
+        var cache = new InMemoryDistributedCache();
+        var sut = new DistributedCacheRefreshLock(cache);
+        using var cts = new CancellationTokenSource();
+        var accesses = 0;
+        cache.OnAccess = () =>
+        {
+            // Access 1: existence GET. Access 2: SET. Access 3: verify GET -> cancel.
+            if (++accesses == 3)
+            {
+                cts.Cancel();
+            }
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.AcquireAsync("user-1", TimeSpan.FromSeconds(1), cts.Token));
+
+        cache.OnAccess = null;
+        var raw = await cache.GetAsync("porta:refresh-lock:user-1", TestContext.Current.CancellationToken);
+        Assert.Null(raw);
+    }
+
+    [Fact]
     public async Task DisposeAsync_WhenCacheThrowsOnRelease_DoesNotThrow()
     {
         // A cache outage between acquire and release must not surface through the

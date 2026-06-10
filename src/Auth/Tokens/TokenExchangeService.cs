@@ -66,10 +66,20 @@ public sealed class TokenExchangeService(
             ["client_id"] = clientId,
             ["client_secret"] = clientSecret,
             ["subject_token"] = accessToken,
-            ["scope"] = scope,
-            ["audience"] = apiConfig.ApiAudience,
             ["requested_token_type"] = AccessTokenTypeUrn
         };
+
+        // RFC 8693 marks scope and audience OPTIONAL; some IdPs reject empty values,
+        // so omit the fields entirely when unconfigured (as the refresh service does).
+        if (!string.IsNullOrEmpty(scope))
+        {
+            dict["scope"] = scope;
+        }
+
+        if (!string.IsNullOrEmpty(apiConfig.ApiAudience))
+        {
+            dict["audience"] = apiConfig.ApiAudience;
+        }
 
         logger.SendingTokenExchangeRequest(tokenEndpoint);
 

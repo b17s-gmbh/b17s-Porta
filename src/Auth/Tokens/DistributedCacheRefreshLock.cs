@@ -72,11 +72,15 @@ internal sealed class DistributedCacheRefreshLock(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            var written = false;
             try
             {
                 var existing = await cache.GetAsync(cacheKey, cancellationToken);
                 if (existing is null)
                 {
+                    // Flag before the write: a SET cancelled mid-flight may still have
+                    // landed, and the compare-and-delete below is a no-op if it didn't.
+                    written = true;
                     await cache.SetAsync(cacheKey, tokenBytes, new DistributedCacheEntryOptions
                     {
                         AbsoluteExpirationRelativeToNow = LockTtl,
@@ -90,7 +94,17 @@ internal sealed class DistributedCacheRefreshLock(
                     // Lost the race; another replica's token is in the slot. Fall through to wait.
                 }
             }
-            catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
+            catch (Exception ex) when (ex.IsCanceledBy(cancellationToken))
+            {
+                // Cancelled after the SET may have landed: without this compare-and-delete
+                // the abandoned entry would block every other replica for the full TTL.
+                if (written)
+                {
+                    await ReleaseAsync(cacheKey, tokenBytes);
+                }
+                throw;
+            }
+            catch (Exception ex)
             {
                 // Cache outage: report not-acquired so the caller falls back to the stale
                 // token, instead of escalating an infrastructure fault into an auth failure.
@@ -110,7 +124,9 @@ internal sealed class DistributedCacheRefreshLock(
             {
                 backoff = remaining;
             }
-            await Task.Delay(backoff, cancellationToken);
+            // Sleep on the same clock the deadline math uses, so a fake TimeProvider
+            // in tests (or a custom one in production) keeps both consistent.
+            await Task.Delay(backoff, _timeProvider, cancellationToken);
         }
     }
 

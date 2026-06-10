@@ -88,10 +88,11 @@ internal sealed class RefreshLockRegistry : IRefreshLock, IDisposable
             // Race: between the staleness check and the dispose below, an
             // AcquireAsync caller may have refreshed `_lastAccess[key]` and
             // already entered WaitAsync on the semaphore. Re-check the
-            // timestamp under the entry's own slot and only proceed when the
-            // semaphore is provably idle (CurrentCount == 1, i.e. nobody holds
-            // it). If not idle, leave it in place - the next sweep will pick
-            // it up if it goes idle again.
+            // timestamp under the entry's own slot, then claim the semaphore
+            // with Wait(0): a successful claim proves nobody holds it AND
+            // prevents anyone from acquiring it before we dispose - a bare
+            // CurrentCount check would leave a window where a racer acquires
+            // between the check and the dispose, breaking mutual exclusion.
             if (!_lastAccess.TryGetValue(key, out var lastSeen) || lastSeen >= cutoff)
             {
                 continue;
@@ -101,22 +102,30 @@ internal sealed class RefreshLockRegistry : IRefreshLock, IDisposable
                 _lastAccess.TryRemove(key, out DateTimeOffset _);
                 continue;
             }
-            if (semaphore.CurrentCount != 1)
+            try
             {
-                // Someone is holding (or about to hold) it - don't dispose
-                // out from under them. Refresh the timestamp to defer the
-                // next cleanup attempt so we don't spin on a long-held lock.
-                _lastAccess[key] = _timeProvider.GetUtcNow();
+                if (!semaphore.Wait(0))
+                {
+                    // Someone is holding it - don't dispose out from under them.
+                    // Refresh the timestamp to defer the next cleanup attempt so
+                    // we don't spin on a long-held lock.
+                    _lastAccess[key] = _timeProvider.GetUtcNow();
+                    continue;
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // Shutdown Dispose() (or an overlapping sweep) already disposed
+                // this semaphore; nothing left to clean up for this key.
                 continue;
             }
 
-            // Remove first, then dispose. A racing AcquireAsync after this
-            // line will `GetOrAdd` a fresh semaphore - it will not see the
-            // disposed one. The only consumer that can still hold a reference
-            // is one that already passed `GetOrAdd` but not yet `WaitAsync`;
-            // it will see ObjectDisposedException on WaitAsync, which the
-            // caller handles as a "lock unavailable" outcome (the documented
-            // `NotAcquired` path).
+            // We hold the semaphore: remove first, then dispose (never released -
+            // the instance is gone). A racing AcquireAsync after this line will
+            // `GetOrAdd` a fresh semaphore - it will not see the disposed one.
+            // A consumer that already passed `GetOrAdd` but not yet `WaitAsync`
+            // either times out (we hold the count) or sees ObjectDisposedException;
+            // both map to the documented `NotAcquired` outcome.
             if (_locks.TryRemove(key, out var removedSemaphore))
             {
                 _lastAccess.TryRemove(key, out DateTimeOffset _);

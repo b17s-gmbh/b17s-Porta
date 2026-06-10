@@ -161,6 +161,22 @@ public sealed class ReferenceTokenAuthProviderFlowTests
         Assert.Equal(0, introspector.CallCount);
     }
 
+    [Theory]
+    [InlineData("bearer " + Token)]
+    [InlineData("BEARER " + Token)]
+    public async Task TokenPrefix_MatchedCaseInsensitively_PerRfc7235(string header)
+    {
+        // RFC 7235 auth scheme names are case-insensitive; "bearer x" must authenticate
+        // exactly like "Bearer x" (and the match must be ordinal, not culture-sensitive).
+        var introspector = new FakeIntrospector(_ => Active(claims: new() { ["sub"] = "alice" }));
+        var sut = Build(introspector, OptionsFor(validateAudience: false, validateIssuer: false));
+
+        var ctx = await sut.GetAuthContextAsync(WithAuthHeader(header), TestContext.Current.CancellationToken);
+
+        Assert.True(ctx.IsAuthenticated);
+        Assert.Equal(Token, ctx.AccessToken);
+    }
+
     [Fact]
     public async Task ValidToken_IntrospectsAndPopulatesContext_AndCachesResult()
     {

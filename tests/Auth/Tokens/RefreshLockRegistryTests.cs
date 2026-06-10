@@ -197,7 +197,7 @@ public sealed class RefreshLockRegistryTests
     [Fact]
     public async Task Cleanup_LeavesHeldLocksInPlace_AndRefreshesTimestamp()
     {
-        // The held-lock branch (CurrentCount != 1) must NOT dispose the semaphore -
+        // The held-lock branch (Wait(0) fails) must NOT dispose the semaphore -
         // an active refresh would crash via ObjectDisposedException on Release().
         // The sweep also re-stamps the timestamp so the next sweep doesn't immediately
         // retry the same entry.
@@ -214,6 +214,47 @@ public sealed class RefreshLockRegistryTests
         // The entry must still exist; the semaphore was not disposed; the held handle
         // can still be released without throwing.
         Assert.True(HasLockEntry(sut, "user-held"));
+        await held.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Cleanup_AfterEviction_SameKeyCanBeReacquired()
+    {
+        // Cleanup claims the semaphore via Wait(0) and disposes it without releasing.
+        // A later acquire on the same key must GetOrAdd a fresh semaphore and succeed -
+        // not observe the claimed/disposed one.
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 20, 12, 0, 0, TimeSpan.Zero));
+        using var sut = new RefreshLockRegistry(metrics: null, timeProvider: clock);
+
+        await using (await sut.AcquireAsync("user-evicted", TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken)) { }
+
+        clock.Advance(TimeSpan.FromMinutes(31));
+        InvokeCleanup(sut);
+        Assert.False(HasLockEntry(sut, "user-evicted"));
+
+        await using var reacquired = await sut.AcquireAsync("user-evicted", TimeSpan.FromMilliseconds(500), TestContext.Current.CancellationToken);
+        Assert.True(reacquired.Acquired);
+    }
+
+    [Fact]
+    public async Task Cleanup_WhileLockHeld_MutualExclusionSurvivesTheSweep()
+    {
+        // The dispose race this guards against: if the sweep disposed a semaphore that a
+        // racer just acquired, a second acquirer would GetOrAdd a fresh one and both would
+        // "hold" the lock. Gating dispose on Wait(0) makes that impossible - a held lock
+        // is never disposed, so a contender during/after the sweep must still time out.
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 5, 20, 12, 0, 0, TimeSpan.Zero));
+        using var sut = new RefreshLockRegistry(metrics: null, timeProvider: clock);
+
+        var held = await sut.AcquireAsync("user-race", TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        Assert.True(held.Acquired);
+
+        clock.Advance(TimeSpan.FromMinutes(31));
+        InvokeCleanup(sut);
+
+        var contender = await sut.AcquireAsync("user-race", TimeSpan.FromMilliseconds(100), TestContext.Current.CancellationToken);
+        Assert.False(contender.Acquired);
+
         await held.DisposeAsync();
     }
 

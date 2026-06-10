@@ -34,9 +34,11 @@ public sealed class ReferenceTokenAuthProvider(
         var options = Options;
         var authContext = new AuthenticationContext();
 
-        // Extract token from header
+        // Extract token from header. RFC 7235 auth schemes are case-insensitive
+        // ("bearer x" is as valid as "Bearer x"), so match the prefix ordinally
+        // but ignoring case - never with culture-sensitive semantics.
         var authHeader = context.Request.Headers[options.TokenHeaderName].FirstOrDefault();
-        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith(options.TokenPrefix))
+        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith(options.TokenPrefix, StringComparison.OrdinalIgnoreCase))
             return authContext;
 
         var token = authHeader[options.TokenPrefix.Length..].Trim();
@@ -258,7 +260,7 @@ public sealed class ReferenceTokenAuthProvider(
     {
         var options = Options;
         var authHeader = context.Request.Headers[options.TokenHeaderName].FirstOrDefault();
-        if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith(options.TokenPrefix))
+        if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith(options.TokenPrefix, StringComparison.OrdinalIgnoreCase))
         {
             var token = authHeader[options.TokenPrefix.Length..].Trim();
             await cache.RemoveAsync(BuildIntrospectionCacheKey(token), cancellationToken);

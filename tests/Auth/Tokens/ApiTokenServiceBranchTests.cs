@@ -227,8 +227,9 @@ public sealed class ApiTokenServiceBranchTests
     public async Task GetApiTokenAsync_ExpiredCachedToken_RefreshConfigIncomplete_InvalidatesAndExchanges()
     {
         // BuildRefreshOptions returns null when any of TokenEndpoint/ClientId/ClientSecret is
-        // missing. In that case the code must invalidate the cache (removing the now-known-stale
-        // entry) and fall back to fresh exchange — not silently keep using the expired entry.
+        // missing. In that case the code must invalidate this API's stale entry (only this
+        // API's — other APIs' valid tokens stay) and fall back to fresh exchange — not
+        // silently keep using the expired entry.
         var storage = new InMemoryTokenStorage();
         var httpContext = new DefaultHttpContext();
         var apiConfig = new ApiConfiguration
@@ -250,6 +251,7 @@ public sealed class ApiTokenServiceBranchTests
         await storage.SetObjectAsync(httpContext, CacheKey, new Dictionary<string, TokenExchangeResponse>
         {
             [apiConfig.ApiPath] = expired,
+            ["/api/other"] = new() { AccessToken = "other-valid", ExpiresIn = 3600, IssuedAt = clock.GetUtcNow() },
         });
 
         var freshResponse = new TokenExchangeResponse { AccessToken = "via-exchange", ExpiresIn = 3600 };
@@ -264,16 +266,23 @@ public sealed class ApiTokenServiceBranchTests
 
         Assert.Equal("via-exchange", result);
         Assert.Equal(0, refresh.CallCount);
-        Assert.Equal(1, storage.RemoveObjectCallCount);
         Assert.Equal(1, exchange.CallCount);
+
+        // Only the failed entry was dropped (then re-populated by the exchange);
+        // the other API's still-valid token survived.
+        var cache = await storage.GetObjectAsync<Dictionary<string, TokenExchangeResponse>>(httpContext, CacheKey);
+        Assert.NotNull(cache);
+        Assert.Equal("via-exchange", cache![apiConfig.ApiPath].AccessToken);
+        Assert.Equal("other-valid", cache["/api/other"].AccessToken);
     }
 
     [Fact]
     public async Task GetApiTokenAsync_ExpiredCachedToken_RefreshReturnsNull_InvalidatesAndExchanges()
     {
         // When TokenRefreshService returns null (IdP said no, or threw and was swallowed
-        // upstream), the cache must be invalidated and we must fall back to a fresh exchange.
-        // Without invalidation, the next call would loop on the same stale entry.
+        // upstream), the failed API's entry must be invalidated and we must fall back to a
+        // fresh exchange. Without invalidation, the next call would loop on the same stale
+        // entry — but other APIs' still-valid tokens in the same dictionary must survive.
         var storage = new InMemoryTokenStorage();
         var httpContext = new DefaultHttpContext();
         var apiConfig = CreateApiConfig();
@@ -288,6 +297,7 @@ public sealed class ApiTokenServiceBranchTests
                 ExpiresIn = 3600,
                 IssuedAt = clock.GetUtcNow().AddHours(-2),
             },
+            ["/api/other"] = new() { AccessToken = "other-valid", ExpiresIn = 3600, IssuedAt = clock.GetUtcNow() },
         });
 
         var refresh = new RecordingRefreshService(response: null); // refresh returns null
@@ -302,8 +312,13 @@ public sealed class ApiTokenServiceBranchTests
 
         Assert.Equal("via-exchange-after-failed-refresh", result);
         Assert.Equal(1, refresh.CallCount);
-        Assert.Equal(1, storage.RemoveObjectCallCount);
         Assert.Equal(1, exchange.CallCount);
+
+        // A single API's refresh failure must not discard every other API's token.
+        var cache = await storage.GetObjectAsync<Dictionary<string, TokenExchangeResponse>>(httpContext, CacheKey);
+        Assert.NotNull(cache);
+        Assert.Equal("via-exchange-after-failed-refresh", cache![apiConfig.ApiPath].AccessToken);
+        Assert.Equal("other-valid", cache["/api/other"].AccessToken);
     }
 
     [Fact]

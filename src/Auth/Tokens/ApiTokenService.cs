@@ -80,7 +80,7 @@ public sealed class ApiTokenService(
                 if (refreshOptions == null)
                 {
                     logger.ApiTokenRefreshReturnedNull(apiConfig.ApiPath);
-                    await InvalidateApiTokensAsync(context, cacheOptions, cancellationToken);
+                    await RemoveCachedApiTokenAsync(context, apiConfig, cacheOptions.CacheKey, cancellationToken);
                 }
                 else
                 {
@@ -107,7 +107,7 @@ public sealed class ApiTokenService(
 
                     logger.ApiTokenRefreshReturnedNull(apiConfig.ApiPath);
                     metrics?.RecordTokenRefresh(success: false, reason: "api_token");
-                    await InvalidateApiTokensAsync(context, cacheOptions, cancellationToken);
+                    await RemoveCachedApiTokenAsync(context, apiConfig, cacheOptions.CacheKey, cancellationToken);
                     // Fall through to perform new token exchange
                 }
             }
@@ -186,6 +186,25 @@ public sealed class ApiTokenService(
         }
 
         return cache != null && cache.TryGetValue(apiConfig.ApiPath, out var value) ? value : null;
+    }
+
+    private async Task RemoveCachedApiTokenAsync(HttpContext context, ApiConfiguration apiConfig, string cacheKey, CancellationToken cancellationToken = default)
+    {
+        // Drop only the failed ApiPath's entry - a single API's refresh failure must not
+        // discard every other API's still-valid token in the per-session dictionary.
+        await _cacheGate.WaitAsync(cancellationToken);
+        try
+        {
+            var cache = await tokenStorage.GetObjectAsync<Dictionary<string, TokenExchangeResponse>>(context, cacheKey);
+            if (cache != null && cache.Remove(apiConfig.ApiPath))
+            {
+                await tokenStorage.SetObjectAsync(context, cacheKey, cache);
+            }
+        }
+        finally
+        {
+            _cacheGate.Release();
+        }
     }
 
     private async Task SetCachedApiTokenAsync(HttpContext context, ApiConfiguration apiConfig, TokenExchangeResponse response, string cacheKey, CancellationToken cancellationToken = default)
