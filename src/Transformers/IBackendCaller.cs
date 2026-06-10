@@ -818,8 +818,9 @@ public sealed class NamedBackendEndpointsBuilder
     /// </summary>
     /// <remarks>
     /// SECURITY: Only use this for trusted internal services that share the same identity provider. The
-    /// user's token will be forwarded to the backend, allowing it to act on behalf of the user. Configure
-    /// trusted hosts via AddPortaAuthentication().AllowUserTokenForwarding().
+    /// user's token will be forwarded to the backend, allowing it to act on behalf of the user. The
+    /// destination host must be listed in <c>PortaCore:TrustedHosts</c> (see
+    /// <see cref="Configuration.PortaCoreOptions.TrustedHosts"/>).
     /// </remarks>
     public NamedBackendEndpointsBuilder WithUserToken()
         => Mutate(e => e with { BackendAuthPolicy = BackendAuthPolicies.BearerToken, ForwardUserToken = true });
@@ -992,8 +993,9 @@ public static class BackendEndpointExtensions
     /// <returns>A configured NamedBackendEndpoint with BearerToken policy</returns>
     /// <remarks>
     /// SECURITY: Only use this for trusted internal services. The user's token will be
-    /// forwarded to the backend, allowing it to act on behalf of the user.
-    /// Configure trusted hosts via AddPortaAuthentication().AllowUserTokenForwarding().
+    /// forwarded to the backend, allowing it to act on behalf of the user. The destination
+    /// host must be listed in <c>PortaCore:TrustedHosts</c> (see
+    /// <see cref="Configuration.PortaCoreOptions.TrustedHosts"/>).
     /// </remarks>
     /// <example>
     /// ("InternalApi", "GET", $"{internalUrl}/data").WithUserToken()

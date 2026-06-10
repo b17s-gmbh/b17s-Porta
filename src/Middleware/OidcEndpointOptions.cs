@@ -38,9 +38,11 @@ public sealed class OidcLoginOptions
     /// <summary>
     /// When true, an unauthenticated caller may only specify the post-login
     /// destination via a signed <c>return_url</c> token issued by this server.
-    /// A raw <c>redirect_uri</c> from an unauthenticated caller is ignored and
-    /// <see cref="DefaultRedirectUri"/> is used instead. This blocks attacker-
-    /// crafted login links from pre-setting internal target paths.
+    /// A raw <c>redirect_uri</c> from an unauthenticated caller is rejected with
+    /// HTTP 400 (<c>{"error":"redirect_uri must be signed", ...}</c>, pointing at
+    /// the sign-return-url endpoint); already-authenticated callers may still pass
+    /// a raw <c>redirect_uri</c>. This blocks attacker-crafted login links from
+    /// pre-setting internal target paths.
     /// Default: true.
     /// </summary>
     public bool RequireSignedReturnUrl { get; set; } = true;
