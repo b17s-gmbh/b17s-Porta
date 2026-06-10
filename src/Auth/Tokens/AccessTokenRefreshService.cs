@@ -84,7 +84,7 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
 
         if (!IsNearExpiry(expiresAt) || string.IsNullOrEmpty(refreshToken))
         {
-            return AccessTokenResult.FromToken(accessToken);
+            return AccessTokenResult.FromTicket(accessToken, refreshToken, auth.Properties.GetTokenValue("id_token"), expiresAt);
         }
 
         return await TryRefreshAsync(context, auth, refreshToken, fallback: accessToken);
@@ -179,7 +179,13 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
             var freshExpiresAt = ParseExpiresAt(properties.GetTokenValue("expires_at"));
             if (!IsNearExpiry(freshExpiresAt))
             {
-                return AccessTokenResult.FromToken(freshAccessToken);
+                // A concurrent request/replica already rotated; surface the store ticket's full
+                // token set - the caller's per-request-cached authenticate result predates it.
+                return AccessTokenResult.FromTicket(
+                    freshAccessToken,
+                    properties.GetTokenValue("refresh_token"),
+                    properties.GetTokenValue("id_token"),
+                    freshExpiresAt);
             }
 
             var freshRefreshToken = properties.GetTokenValue("refresh_token") ?? refreshToken;
@@ -309,7 +315,15 @@ public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
         _logger.AccessTokenRefreshed(response.ExpiresIn);
         _metrics?.RecordTokenRefresh(success: true);
         activity?.SetStatus(ActivityStatusCode.Ok);
-        return AccessTokenResult.FromToken(response.AccessToken);
+
+        // Read the rotated set back off the updated properties (the IdP may have withheld a new
+        // refresh/id token, in which case the ticket keeps the previous one). Callers cannot
+        // re-read the ticket themselves: AuthenticateAsync caches its result per request.
+        return AccessTokenResult.FromTicket(
+            response.AccessToken,
+            properties.GetTokenValue("refresh_token"),
+            properties.GetTokenValue("id_token"),
+            newExpiresAt);
     }
 
     private bool IsNearExpiry(DateTimeOffset? expiresAt)

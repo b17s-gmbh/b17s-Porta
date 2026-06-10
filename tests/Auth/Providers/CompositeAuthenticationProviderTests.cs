@@ -164,6 +164,22 @@ public sealed class CompositeAuthenticationProviderTests
     }
 
     [Fact]
+    public async Task InvalidateAsync_Canceled_PropagatesAndStopsFanOut()
+    {
+        // Best-effort fan-out applies to provider faults, not to cooperative cancellation:
+        // a dead request must stop the logout loop, not silently skip to the next provider.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var a = new RecordingProvider("Cookies") { InvalidateThrows = new OperationCanceledException() };
+        var b = new RecordingProvider("Bearer");
+        var sut = Create(a, b);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.InvalidateAsync(new DefaultHttpContext(), cts.Token));
+        Assert.Equal(0, b.InvalidateCalls);
+    }
+
+    [Fact]
     public void Scheme_IsLiteralComposite()
     {
         // The composite's own scheme should be a stable, distinct value so it cannot be

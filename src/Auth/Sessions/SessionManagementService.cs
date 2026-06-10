@@ -81,6 +81,13 @@ public sealed class SessionManagementService(
         TimeSpan.FromMinutes(Math.Max(config.SessionTimeoutInMin, config.Cookie.ExpireTimeSpanMinutes));
 
     /// <summary>
+    /// The configured cookie ticket lifetime - the basis for <see cref="SessionInfo.ExpiresAt"/>.
+    /// The ticket's own ExpiresUtc is authoritative; this mirror exists so the admin API can
+    /// report an expiry without loading every ticket.
+    /// </summary>
+    private TimeSpan TicketLifetime => TimeSpan.FromMinutes(config.Cookie.ExpireTimeSpanMinutes);
+
+    /// <summary>
     /// Registers a session keyed by the OIDC <c>sub</c> claim. Email is an optional
     /// secondary index - we only add it when the caller passes a value, which by
     /// convention means the IdP asserted <c>email_verified=true</c>.
@@ -92,6 +99,7 @@ public sealed class SessionManagementService(
 
         var normalizedEmail = string.IsNullOrEmpty(email) ? null : email.ToLowerInvariant();
 
+        var now = _timeProvider.GetUtcNow();
         var metadata = new SessionInfo
         {
             SessionId = sessionId,
@@ -99,8 +107,12 @@ public sealed class SessionManagementService(
             UserId = userId,
             IpAddress = ipAddress,
             UserAgent = userAgent,
-            CreatedAt = _timeProvider.GetUtcNow(),
-            LastActivity = _timeProvider.GetUtcNow(),
+            CreatedAt = now,
+            LastActivity = now,
+            // Mirrors the cookie ticket's ExpiresUtc (issued at sign-in, moments after this
+            // event, from the same configured lifetime). Slid forward on activity when
+            // sliding expiration is enabled - see TouchSessionAsync.
+            ExpiresAt = now + TicketLifetime,
             EncryptedRefreshToken = encryptedRefreshToken,
         };
 
@@ -171,7 +183,7 @@ public sealed class SessionManagementService(
             }
 
             metadata.EncryptedRefreshToken = encryptedRefreshToken;
-            metadata.LastActivity = _timeProvider.GetUtcNow();
+            Touch(metadata);
 
             await cache.SetStringAsync(metadataKey, JsonSerializer.Serialize(metadata), SessionEntryOptions);
         }
@@ -204,20 +216,23 @@ public sealed class SessionManagementService(
             foreach (var sessionId in sessionIds)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var metadata = await GetSessionMetadataAsync(sessionId, cancellationToken);
+                var (metadata, lookupFailed) = await GetSessionMetadataAsync(sessionId, cancellationToken);
                 if (metadata != null)
                 {
-                    // Verify the ASP.NET Core session still exists
-                    if (await SessionExistsAsync(sessionId))
-                    {
-                        sessions.Add(metadata);
-                    }
-                    else
+                    // Verify the ASP.NET Core session still exists. A failed check (null) is
+                    // "unknown", not "gone": pruning on a transient cache error would
+                    // permanently remove a live session from the email index, so only a
+                    // definite "ticket absent" verdict prunes.
+                    if (await SessionExistsAsync(sessionId) is false)
                     {
                         expiredSessionIds.Add(sessionId);
                     }
+                    else
+                    {
+                        sessions.Add(metadata);
+                    }
                 }
-                else
+                else if (!lookupFailed)
                 {
                     expiredSessionIds.Add(sessionId);
                 }
@@ -249,7 +264,7 @@ public sealed class SessionManagementService(
 
         try
         {
-            var metadata = await GetSessionMetadataAsync(sessionId, cancellationToken);
+            var (metadata, _) = await GetSessionMetadataAsync(sessionId, cancellationToken);
 
             if (revokeTokens && metadata != null)
             {
@@ -331,12 +346,34 @@ public sealed class SessionManagementService(
             }
 
             var terminatedCount = 0;
+            var deadSessionIds = new List<string>();
             foreach (var sessionId in sessionIds.ToArray())
             {
-                if (await TerminateSessionAsync(sessionId, revokeTokens, cancellationToken, reason))
+                // TerminateSessionAsync returns true even for already-dead ids (best-effort
+                // semantics), and only prunes the indexes when metadata is still present. So:
+                // count a termination only when the session was live, and collect ids whose
+                // metadata is definitively gone for pruning - otherwise the subject index
+                // accumulates dead ids forever and this count inflates on every call. A failed
+                // metadata lookup is "unknown" and must neither count nor prune.
+                var (metadata, lookupFailed) = await GetSessionMetadataAsync(sessionId, cancellationToken);
+                var terminated = await TerminateSessionAsync(sessionId, revokeTokens, cancellationToken, reason);
+
+                if (metadata is not null)
                 {
-                    terminatedCount++;
+                    if (terminated)
+                    {
+                        terminatedCount++;
+                    }
                 }
+                else if (!lookupFailed)
+                {
+                    deadSessionIds.Add(sessionId);
+                }
+            }
+
+            if (deadSessionIds.Count > 0)
+            {
+                await RemoveFromSubjectIndexAsync(subject, deadSessionIds, cancellationToken);
             }
 
             logger.SessionsTerminatedForSubject(terminatedCount, subject, LogRedaction.FingerprintSubject(subject));
@@ -367,13 +404,26 @@ public sealed class SessionManagementService(
             if (metadata == null)
                 return;
 
-            metadata.LastActivity = _timeProvider.GetUtcNow();
+            Touch(metadata);
 
             await cache.SetStringAsync(metadataKey, JsonSerializer.Serialize(metadata), SessionEntryOptions);
         }
         catch (Exception ex)
         {
             logger.TouchSessionFailed(LogRedaction.RedactSessionId(sessionId), ex);
+        }
+    }
+
+    /// <summary>
+    /// Stamps activity on the metadata record. With sliding cookie expiration the auth
+    /// ticket's lifetime extends on activity, so the reported expiry slides with it.
+    /// </summary>
+    private void Touch(SessionInfo metadata)
+    {
+        metadata.LastActivity = _timeProvider.GetUtcNow();
+        if (config.Cookie.SlidingExpiration)
+        {
+            metadata.ExpiresAt = metadata.LastActivity + TicketLifetime;
         }
     }
 
@@ -401,7 +451,12 @@ public sealed class SessionManagementService(
         }
     }
 
-    private async Task<SessionInfo?> GetSessionMetadataAsync(string sessionId, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Reads the session metadata record. <c>LookupFailed</c> distinguishes a transient
+    /// read error from a genuine cache miss so that pruning decisions treat the former
+    /// as "unknown" rather than "session gone".
+    /// </summary>
+    private async Task<(SessionInfo? Metadata, bool LookupFailed)> GetSessionMetadataAsync(string sessionId, CancellationToken cancellationToken = default)
     {
         try
         {
@@ -409,18 +464,24 @@ public sealed class SessionManagementService(
             var metadataJson = await cache.GetStringAsync(metadataKey, cancellationToken);
 
             if (string.IsNullOrEmpty(metadataJson))
-                return null;
+                return (null, false);
 
-            return JsonSerializer.Deserialize<SessionInfo>(metadataJson);
+            return (JsonSerializer.Deserialize<SessionInfo>(metadataJson), false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.GetSessionMetadataFailed(LogRedaction.RedactSessionId(sessionId), ex);
-            return null;
+            return (null, true);
         }
     }
 
-    private async Task<bool> SessionExistsAsync(string sessionId)
+    /// <summary>
+    /// Checks whether the server-side auth ticket for the session still exists.
+    /// Returns <see langword="null"/> when the check itself failed (transient cache
+    /// error): callers must treat that as "unknown", not "gone" - pruning an index
+    /// entry on a transient error would permanently de-list a live session.
+    /// </summary>
+    private async Task<bool?> SessionExistsAsync(string sessionId)
     {
         // No ticket store → treat metadata existence as proof of liveness.
         // Returning false here would make GetSessionsByEmailAsync purge live sessions
@@ -438,7 +499,7 @@ public sealed class SessionManagementService(
         catch (Exception ex)
         {
             logger.SessionExistsCheckFailed(LogRedaction.RedactSessionId(sessionId), ex);
-            return false;
+            return null;
         }
     }
 
@@ -655,7 +716,7 @@ public sealed class SessionManagementService(
 
         try
         {
-            var metadata = await GetSessionMetadataAsync(sessionId, cancellationToken);
+            var (metadata, _) = await GetSessionMetadataAsync(sessionId, cancellationToken);
             if (metadata?.EncryptedRefreshToken is null)
             {
                 logger.NoRefreshTokenStored(LogRedaction.RedactSessionId(sessionId));

@@ -253,6 +253,24 @@ public sealed class ReferenceTokenAuthProviderFlowTests
     }
 
     [Fact]
+    public async Task IntrospectionCanceled_PropagatesInsteadOfFailingClosed()
+    {
+        // Cooperative cancellation (request abort, shutdown) must propagate per the provider
+        // contract - not be laundered into an "introspection error" unauthenticated context.
+        using var cts = new CancellationTokenSource();
+        var introspector = new FakeIntrospector(_ =>
+        {
+            // Model the request aborting mid-introspection.
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        });
+        var sut = Build(introspector, OptionsFor());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.GetAuthContextAsync(WithAuthHeader(Bearer), cts.Token));
+    }
+
+    [Fact]
     public async Task CorruptCacheEntry_IsEvicted_AndFallsThroughToIntrospection()
     {
         // Old cache shape / partial write must not lock everyone out of login until TTL.

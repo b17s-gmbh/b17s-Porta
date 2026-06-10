@@ -80,10 +80,11 @@ internal sealed class CompositeAuthenticationProvider(
                 await provider.InvalidateAsync(context, cancellationToken);
                 logger.InvalidatedScheme(provider.Scheme);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
             {
                 // One provider's invalidate failure should not block sibling providers from
-                // also clearing their credential surface. Logout is best-effort across all.
+                // also clearing their credential surface. Logout is best-effort across all -
+                // but a caller-requested cancellation still propagates per the provider contract.
                 logger.InvalidateFailed(provider.Scheme, ex);
             }
         }

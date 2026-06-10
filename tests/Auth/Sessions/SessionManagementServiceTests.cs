@@ -289,6 +289,113 @@ public class SessionManagementServiceTests
         Assert.Equal(0, harness.Net("bff.sessions.active"));
     }
 
+    [Fact]
+    public async Task GetSessionsByEmailAsync_TicketCheckThrows_TreatsAsUnknown_DoesNotPrune()
+    {
+        // A transient cache error while verifying the ticket must not be read as "session
+        // gone" - that would permanently remove a live session from the email index, making
+        // admin terminate-by-email silently miss it forever (report L2).
+        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var config = new SessionAuthenticationConfiguration { SessionTimeoutInMin = 60 };
+        var store = new FlakyTicketStore();
+        var svc = new SessionManagementService(cache, Options.Create(config), NullLogger<SessionManagementService>.Instance, ticketStore: store);
+        store.Seed("sid-1");
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "user@example.com");
+
+        store.ThrowOnRetrieve = true;
+        var duringOutage = await svc.GetSessionsByEmailAsync("user@example.com", TestContext.Current.CancellationToken);
+
+        store.ThrowOnRetrieve = false;
+        var afterRecovery = await svc.GetSessionsByEmailAsync("user@example.com", TestContext.Current.CancellationToken);
+
+        Assert.Single(duringOutage); // unknown is still reported, not hidden
+        Assert.Single(afterRecovery); // and crucially, never pruned from the index
+    }
+
+    [Fact]
+    public async Task GetSessionsByEmailAsync_TicketDefinitelyGone_StillPrunesFromIndex()
+    {
+        // The L2 fix must not break legitimate cleanup: a definite "ticket absent" verdict
+        // (store reachable, no ticket) still prunes the dead id from the email index.
+        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var config = new SessionAuthenticationConfiguration { SessionTimeoutInMin = 60 };
+        var store = new FlakyTicketStore(); // never seeded -> RetrieveAsync returns null
+        var svc = new SessionManagementService(cache, Options.Create(config), NullLogger<SessionManagementService>.Instance, ticketStore: store);
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "user@example.com");
+
+        var sessions = await svc.GetSessionsByEmailAsync("user@example.com", TestContext.Current.CancellationToken);
+
+        Assert.Empty(sessions);
+        Assert.Null(await cache.GetStringAsync("porta:email_sessions:user@example.com", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task TerminateSessionsBySubject_DeadIndexEntry_NotCounted_AndPruned()
+    {
+        // Ids whose metadata already expired must not inflate "Terminated N sessions", and
+        // must be pruned so the subject index doesn't accumulate dead ids forever (report L4).
+        var (svc, cache) = CreateService();
+        await svc.RegisterSessionAsync("sid-live", userId: "user-1");
+        await svc.RegisterSessionAsync("sid-dead", userId: "user-1");
+        // Simulate sid-dead's metadata expiring while its subject index entry lingers.
+        await cache.RemoveAsync(MetadataPrefix + "sid-dead", TestContext.Current.CancellationToken);
+
+        var count = await svc.TerminateSessionsBySubjectAsync("user-1", revokeTokens: false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, count);
+        // Live id removed by its termination, dead id by the prune: index empty and deleted.
+        Assert.Null(await cache.GetStringAsync("porta:sub_sessions:user-1", TestContext.Current.CancellationToken));
+        // Second sweep finds nothing left to count.
+        Assert.Equal(0, await svc.TerminateSessionsBySubjectAsync("user-1", revokeTokens: false, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task RegisterSessionAsync_PopulatesExpiresAt_FromCookieTicketLifetime()
+    {
+        // ExpiresAt mirrors the cookie ticket lifetime so the admin API reports a real
+        // expiry instead of the perpetual null it shipped with (report L3).
+        var now = new DateTimeOffset(2026, 6, 10, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(now);
+        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var config = new SessionAuthenticationConfiguration
+        {
+            SessionTimeoutInMin = 60,
+            Cookie = new CookieSecurityConfiguration { ExpireTimeSpanMinutes = 90 },
+        };
+        var svc = new SessionManagementService(cache, Options.Create(config), NullLogger<SessionManagementService>.Instance, timeProvider: clock);
+
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1", email: "user@example.com");
+
+        var stored = JsonSerializer.Deserialize<SessionInfo>(
+            (await cache.GetStringAsync(MetadataPrefix + "sid-1", TestContext.Current.CancellationToken))!);
+        Assert.Equal(now.AddMinutes(90), stored!.ExpiresAt);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TouchSessionAsync_SlidesExpiresAt_OnlyWithSlidingExpiration(bool sliding)
+    {
+        var start = new DateTimeOffset(2026, 6, 10, 12, 0, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(start);
+        var cache = new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions()));
+        var config = new SessionAuthenticationConfiguration
+        {
+            SessionTimeoutInMin = 60,
+            Cookie = new CookieSecurityConfiguration { ExpireTimeSpanMinutes = 60, SlidingExpiration = sliding },
+        };
+        var svc = new SessionManagementService(cache, Options.Create(config), NullLogger<SessionManagementService>.Instance, timeProvider: clock);
+        await svc.RegisterSessionAsync("sid-1", userId: "user-1");
+
+        clock.Now = start.AddMinutes(30);
+        await svc.TouchSessionAsync("sid-1");
+
+        var stored = JsonSerializer.Deserialize<SessionInfo>(
+            (await cache.GetStringAsync(MetadataPrefix + "sid-1", TestContext.Current.CancellationToken))!);
+        var expected = sliding ? start.AddMinutes(90) : start.AddMinutes(60);
+        Assert.Equal(expected, stored!.ExpiresAt);
+    }
+
     // Pins the H1 invariant: metadata and the sub/email revocation indexes must not be
     // able to expire while the cookie ticket is still alive. Their sliding window is
     // max(SessionTimeoutInMin, Cookie.ExpireTimeSpanMinutes) - at least one full cookie
@@ -356,6 +463,40 @@ public class SessionManagementServiceTests
         var protector = new EphemeralDataProtectionProvider();
         var svc = new SessionManagementService(cache, Options.Create(config), NullLogger<SessionManagementService>.Instance, tokenRevocationService: revocation, dataProtectionProvider: protector);
         return (svc, cache, revocation);
+    }
+
+    /// <summary>
+    /// Ticket store whose RetrieveAsync can be toggled to throw, modelling a transient
+    /// distributed-cache outage during the SessionExists liveness check.
+    /// </summary>
+    private sealed class FlakyTicketStore : ITicketStore
+    {
+        private readonly Dictionary<string, AuthenticationTicket> _tickets = new(StringComparer.Ordinal);
+
+        public bool ThrowOnRetrieve { get; set; }
+
+        public void Seed(string key) => _tickets[key] = new AuthenticationTicket(
+            new ClaimsPrincipal(new ClaimsIdentity(CookieAuthenticationDefaults.AuthenticationScheme)),
+            CookieAuthenticationDefaults.AuthenticationScheme);
+
+        public Task<string> StoreAsync(AuthenticationTicket ticket) => throw new NotSupportedException();
+        public Task RenewAsync(string key, AuthenticationTicket ticket) => Task.CompletedTask;
+
+        public Task<AuthenticationTicket?> RetrieveAsync(string key) => ThrowOnRetrieve
+            ? throw new InvalidOperationException("cache outage")
+            : Task.FromResult(_tickets.GetValueOrDefault(key));
+
+        public Task RemoveAsync(string key)
+        {
+            _tickets.Remove(key);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeTimeProvider(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
     }
 
     private sealed class RecordingRevocationService : ITokenRevocationService

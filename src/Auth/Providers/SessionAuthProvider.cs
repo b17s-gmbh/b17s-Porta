@@ -44,25 +44,19 @@ public sealed class SessionAuthProvider(
             return AuthenticationContext.Unauthenticated();
         }
 
-        var accessToken = refreshResult.AccessToken;
-
-        // Re-read after potential refresh - the ticket may now hold rotated tokens.
-        if (accessToken is not null)
-        {
-            auth = await context.AuthenticateAsync(CookieScheme);
-        }
-
+        // The cookie handler caches its AuthenticateAsync result per request, so a second
+        // AuthenticateAsync here would return the pre-refresh ticket - including a
+        // rotated-out refresh token that, if replayed against a strict-rotation IdP,
+        // triggers invalid_grant / token-family revocation. The refresh service is the
+        // only component that sees the rotated set, so it reports it on its result;
+        // the (unrotated) request ticket fills any value it didn't supply.
         var properties = auth.Properties;
-        var refreshToken = properties?.GetTokenValue("refresh_token");
-        var idToken = properties?.GetTokenValue("id_token");
-        var expiresAt = ParseExpiresAt(properties?.GetTokenValue("expires_at"));
-
         var authContext = new AuthenticationContext
         {
-            AccessToken = accessToken ?? properties?.GetTokenValue("access_token"),
-            RefreshToken = refreshToken,
-            IdToken = idToken,
-            ExpiresAt = expiresAt,
+            AccessToken = refreshResult.AccessToken ?? properties.GetTokenValue("access_token"),
+            RefreshToken = refreshResult.RefreshToken ?? properties.GetTokenValue("refresh_token"),
+            IdToken = refreshResult.IdToken ?? properties.GetTokenValue("id_token"),
+            ExpiresAt = refreshResult.ExpiresAt ?? ParseExpiresAt(properties.GetTokenValue("expires_at")),
         };
 
         if (auth.Principal?.Identity?.IsAuthenticated == true)
@@ -111,7 +105,7 @@ public sealed class SessionAuthProvider(
                 ServiceTokens = new Dictionary<string, string>(current.ServiceTokens),
             };
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
         {
             logger.SessionRefreshError(ex);
             return null;

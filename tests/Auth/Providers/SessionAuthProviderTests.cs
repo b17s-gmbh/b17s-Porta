@@ -130,25 +130,33 @@ public sealed class SessionAuthProviderTests
     }
 
     [Fact]
-    public async Task GetAuthContextAsync_AccessTokenRefreshed_TriggersTicketReRead()
+    public async Task GetAuthContextAsync_TokensRotated_UsesRefreshServiceResult_NotCachedTicket()
     {
-        // The provider re-reads the cookie ticket after the refresh service runs, so the
-        // returned context picks up rotated refresh/expires values, not the pre-refresh ones.
-        var refreshSvc = new RecordingRefresh { Token = "rotated-access" };
+        // The production cookie handler caches its AuthenticateAsync result per request, so
+        // re-authenticating after a refresh returns the SAME pre-refresh ticket (modelled here
+        // by FakeAuthenticationService always returning one result). The rotated set must come
+        // off the refresh service's result - otherwise the context carries the rotated-out
+        // refresh token, and a consumer replaying it at a strict-rotation IdP triggers
+        // invalid_grant / token-family revocation.
+        var newExpiry = new DateTimeOffset(2099, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        var refreshSvc = new RecordingRefresh
+        {
+            Result = AccessTokenResult.FromTicket("rotated-access", "rotated-refresh", "rotated-id", newExpiry),
+        };
 
-        var initial = MakeTicket("user-1", refresh: "old-refresh", expiresAt: "2099-01-01T00:00:00Z");
-        var rotated = MakeTicket("user-1", refresh: "rotated-refresh", expiresAt: "2099-06-01T00:00:00Z");
-
-        var fakeAuth = new SequencedAuthenticationService(
-            AuthenticateResult.Success(initial),
-            AuthenticateResult.Success(rotated));
+        var preRefresh = MakeTicket("user-1", refresh: "old-refresh", expiresAt: "2099-01-01T00:00:00Z");
+        var fakeAuth = new FakeAuthenticationService(AuthenticateResult.Success(preRefresh));
         var http = BuildHttpContext(fakeAuth);
         var sut = new SessionAuthProvider(refreshSvc, new ThrowingTokenRefresh(), new NoopApiTokenService(), NullLogger<SessionAuthProvider>.Instance);
 
         var result = await sut.GetAuthContextAsync(http, TestContext.Current.CancellationToken);
 
+        Assert.Equal("rotated-access", result.AccessToken);
         Assert.Equal("rotated-refresh", result.RefreshToken);
-        Assert.Equal(2, fakeAuth.Calls);
+        Assert.Equal("rotated-id", result.IdToken);
+        Assert.Equal(newExpiry, result.ExpiresAt);
+        // A second AuthenticateAsync would only re-serve the cached pre-refresh ticket.
+        Assert.Equal(1, fakeAuth.Calls);
     }
 
     [Theory]
@@ -254,6 +262,20 @@ public sealed class SessionAuthProviderTests
     }
 
     [Fact]
+    public async Task RefreshAsync_Canceled_PropagatesInsteadOfReturningNull()
+    {
+        // Documented provider contract: cooperative cancellation propagates. It must not be
+        // laundered into the "refresh failed" null that callers treat as a transient IdP error.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var tokenRefresh = new RecordingTokenRefresh { Throws = new OperationCanceledException() };
+        var sut = new SessionAuthProvider(new ThrowingAccessTokenRefresh(), tokenRefresh, new NoopApiTokenService(), NullLogger<SessionAuthProvider>.Instance);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sut.RefreshAsync(new AuthenticationContext { RefreshToken = "rt" }, cts.Token));
+    }
+
+    [Fact]
     public async Task RefreshAsync_ServiceThrows_SwallowsAndReturnsNull()
     {
         // Provider catches and logs; a transient IdP outage must not propagate as a 500.
@@ -323,37 +345,17 @@ public sealed class SessionAuthProviderTests
         }
     }
 
-    private sealed class SequencedAuthenticationService : IAuthenticationService
-    {
-        private readonly Queue<AuthenticateResult> _results;
-        public int Calls { get; private set; }
-
-        public SequencedAuthenticationService(params AuthenticateResult[] results)
-        {
-            _results = new Queue<AuthenticateResult>(results);
-        }
-
-        public Task<AuthenticateResult> AuthenticateAsync(HttpContext context, string? scheme)
-        {
-            Calls++;
-            return Task.FromResult(_results.Dequeue());
-        }
-
-        public Task ChallengeAsync(HttpContext context, string? scheme, AuthenticationProperties? properties) => Task.CompletedTask;
-        public Task ForbidAsync(HttpContext context, string? scheme, AuthenticationProperties? properties) => Task.CompletedTask;
-        public Task SignInAsync(HttpContext context, string? scheme, ClaimsPrincipal principal, AuthenticationProperties? properties) => Task.CompletedTask;
-        public Task SignOutAsync(HttpContext context, string? scheme, AuthenticationProperties? properties) => Task.CompletedTask;
-    }
-
     private sealed class RecordingRefresh : IAccessTokenRefreshService
     {
         public string? Token { get; set; } = "access";
         public bool SessionTerminated { get; set; }
+        public AccessTokenResult? Result { get; set; }
         public int Calls { get; private set; }
 
         public Task<AccessTokenResult> GetAccessTokenAsync(HttpContext context)
         {
             Calls++;
+            if (Result is { } r) return Task.FromResult(r);
             return Task.FromResult(SessionTerminated ? AccessTokenResult.SignedOut() : AccessTokenResult.FromToken(Token));
         }
 

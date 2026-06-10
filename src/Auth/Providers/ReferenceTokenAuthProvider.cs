@@ -131,7 +131,7 @@ public sealed class ReferenceTokenAuthProvider(
                     AbsoluteExpirationRelativeToNow = cacheDuration
                 }, cancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!ex.IsCanceledBy(cancellationToken))
         {
             logger.IntrospectionError(ex);
             authContext.AccessToken = null;

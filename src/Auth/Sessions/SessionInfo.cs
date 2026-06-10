@@ -31,7 +31,11 @@ public sealed class SessionInfo
     public DateTimeOffset LastActivity { get; set; }
 
     /// <summary>
-    /// When the session expires
+    /// When the session expires, computed from the configured cookie ticket lifetime
+    /// (<c>Cookie.ExpireTimeSpanMinutes</c>) at registration and slid forward on activity
+    /// when sliding expiration is enabled. The auth ticket's own <c>ExpiresUtc</c> is
+    /// authoritative; this mirror exists for admin reporting. <c>null</c> for records
+    /// written before the field was populated.
     /// </summary>
     public DateTimeOffset? ExpiresAt { get; set; }
 
