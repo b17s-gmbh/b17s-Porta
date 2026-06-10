@@ -310,7 +310,12 @@ public sealed class PortaMetrics
     /// Records the end-to-end processing duration of a request on the <c>bff.request.duration</c> histogram.
     /// </summary>
     /// <param name="durationMs">The request processing duration in milliseconds.</param>
-    /// <param name="method">The HTTP method (e.g. <c>GET</c>) — inherently low cardinality.</param>
+    /// <param name="method">
+    /// The HTTP method, recorded as the <c>method</c> tag. The caller must supply a <strong>bounded</strong>
+    /// value: servers accept arbitrary token methods, so pass the raw method only after collapsing
+    /// nonstandard verbs to <c>_OTHER</c> (the OTel <c>http.request.method</c> convention), as
+    /// <c>PortaTelemetryMiddleware</c> does.
+    /// </param>
     /// <param name="routeTemplate">
     /// The <strong>low-cardinality route template</strong> (e.g. <c>/api/users/{id}</c>), recorded as the
     /// <c>route</c> tag. Pass the route <em>template</em>, never the concrete request path: a per-request
@@ -365,7 +370,10 @@ public sealed class PortaMetrics
     /// Records the request body size on the <c>bff.request.size</c> histogram.
     /// </summary>
     /// <param name="bytes">The request body size in bytes.</param>
-    /// <param name="method">The HTTP method, recorded as the <c>method</c> tag.</param>
+    /// <param name="method">
+    /// The HTTP method, recorded as the <c>method</c> tag. Must be a bounded value — see
+    /// <see cref="RecordRequestDuration"/> for the cardinality contract.
+    /// </param>
     public void RecordRequestSize(long bytes, string method)
     {
         var tags = new TagList

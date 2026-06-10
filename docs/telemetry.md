@@ -71,11 +71,11 @@ All counters and histograms below are emitted under the `b17s.Porta` meter. Sour
 
 | Metric | Unit | Tags | Description |
 |--------|------|------|-------------|
-| `bff.request.duration` | `ms` | `method`, `route`, `status_code` | End-to-end request processing time. Requires `UsePortaTelemetry()`. |
+| `bff.request.duration` | `ms` | `method`, `route`, `status_code` | End-to-end request processing time. Nonstandard HTTP methods collapse to `_OTHER` (OTel `http.request.method` convention); unrouted requests collapse to `route` = `unmatched`. Requires `UsePortaTelemetry()`. |
 | `bff.backend.duration` | `ms` | `service`, `protocol` | Backend call duration. |
 | `bff.transformation.duration` | `ms` | `strategy` | Time spent inside the transformer's `TransformAsync` (raw-forward records `strategy` = `RawForward:{name}`). |
 | `bff.auth.duration` | `ms` | `provider` | Time spent in `IAuthenticationProvider` resolution. |
-| `bff.request.size` | `bytes` | `method` | Incoming request body size (from `Content-Length`). Requires `UsePortaTelemetry()`. |
+| `bff.request.size` | `bytes` | `method` | Incoming request body size (from `Content-Length`). Nonstandard HTTP methods collapse to `_OTHER`. Requires `UsePortaTelemetry()`. |
 | `bff.response.size` | `bytes` | `status_code` | Outgoing response body size. Requires `UsePortaTelemetry()`. |
 
 Latency histograms use the OpenTelemetry `http.server.request.duration`-style buckets (`0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000` ms). Size histograms cover `256 B → 256 MiB` so the `MaxBackendResponseBytes` (10 MiB) and `MaxRawForwardResponseBytes` (100 MiB) caps land in real buckets.

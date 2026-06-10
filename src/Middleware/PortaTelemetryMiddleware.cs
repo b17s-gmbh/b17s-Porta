@@ -39,7 +39,7 @@ public sealed class PortaTelemetryMiddleware(RequestDelegate next, IOptions<Port
             return;
         }
 
-        var method = context.Request.Method;
+        var method = NormalizeMethod(context.Request.Method);
         var requestSize = context.Request.ContentLength;
 
         // Fixed category activity name; HTTP detail lives on tags so span cardinality stays bounded.
@@ -87,6 +87,16 @@ public sealed class PortaTelemetryMiddleware(RequestDelegate next, IOptions<Port
             metrics.RecordResponseSize(countingBody.BytesWritten, status);
         }
     }
+
+    // Kestrel accepts any RFC 9110 token as a method, so tagging it verbatim would let a client
+    // mint one time-series per invented method. Collapse everything outside the nine standard
+    // verbs to "_OTHER", matching the OTel http.request.method convention (known methods are
+    // matched case-sensitively, as the RFC defines them).
+    private static string NormalizeMethod(string method) => method switch
+    {
+        "GET" or "HEAD" or "POST" or "PUT" or "DELETE" or "CONNECT" or "OPTIONS" or "TRACE" or "PATCH" => method,
+        _ => "_OTHER",
+    };
 
     private static string ResolveRouteTemplate(HttpContext context)
     {
