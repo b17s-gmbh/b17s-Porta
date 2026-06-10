@@ -322,15 +322,6 @@ internal static partial class ApiTokenServiceLogging
         string apiPath);
 
     [LoggerMessage(
-        EventId = 11008,
-        Level = LogLevel.Warning,
-        Message = "Token refresh failed for API: {ApiPath}, invalidating cache and performing new token exchange")]
-    public static partial void ApiTokenRefreshFailed(
-        this ILogger logger,
-        Exception ex,
-        string apiPath);
-
-    [LoggerMessage(
         EventId = 11009,
         Level = LogLevel.Debug,
         Message = "Performing token exchange for API: {ApiPath}, scopes: {ApiScopes}")]
@@ -347,15 +338,6 @@ internal static partial class ApiTokenServiceLogging
         this ILogger logger,
         string apiPath,
         int expiresIn);
-
-    [LoggerMessage(
-        EventId = 11011,
-        Level = LogLevel.Error,
-        Message = "Failed to obtain API token for: {ApiPath}. Returning null (fail-closed); the request will not be forwarded with a token")]
-    public static partial void ApiTokenExchangeFailed(
-        this ILogger logger,
-        Exception ex,
-        string apiPath);
 
     [LoggerMessage(
         EventId = 11013,

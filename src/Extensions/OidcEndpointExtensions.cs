@@ -62,6 +62,9 @@ public static class OidcEndpointExtensions
         string path = "/bff/login",
         Action<OidcLoginOptions>? configureOptions = null)
     {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
         // Presence of the registry is the sentinel for AddOidcEndpoints having run; without it
         // the middleware would fail at pipeline build with an opaque "Unable to resolve service
         // for type 'IReturnUrlProtector'" instead of this actionable message.
@@ -139,6 +142,9 @@ public static class OidcEndpointExtensions
         string path = "/bff/logout",
         Action<OidcLogoutOptions>? configureOptions = null)
     {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
         var options = BuildEndpointOptions(app, configureOptions);
 
         var failure = RedirectUriValidation.ValidateConfiguredRedirectUri(
@@ -226,6 +232,9 @@ public static class OidcEndpointExtensions
         string path = "/bff/backchannel-logout",
         Action<OidcBackChannelLogoutOptions>? configureOptions = null)
     {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
         var options = BuildEndpointOptions(app, configureOptions);
 
         // Fail-fast: turning off signature / issuer / audience validation lets an
@@ -315,6 +324,9 @@ public static class OidcEndpointExtensions
         string path = "/bff/admin/sessions",
         Action<SessionAdminOptions>? configureOptions = null)
     {
+        ArgumentNullException.ThrowIfNull(app);
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
         var options = BuildEndpointOptions(app, configureOptions);
 
         // Validate that a policy is specified
@@ -429,6 +441,8 @@ public static class OidcEndpointServiceExtensions
     /// </remarks>
     public static IServiceCollection AddOidcEndpoints(this IServiceCollection services)
     {
+        ArgumentNullException.ThrowIfNull(services);
+
         // Options infrastructure floor: each Use* endpoint builds its effective options
         // through IOptionsFactory<TOptions>, so idiomatic services.Configure<TOptions>(...)
         // / PostConfigure<TOptions>(...) composition reaches the middleware, with the

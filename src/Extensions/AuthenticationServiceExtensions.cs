@@ -64,6 +64,9 @@ public static class AuthenticationServiceExtensions
         IConfiguration configuration,
         string configSectionName = "SessionAuthentication")
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
         services.Configure<SessionAuthenticationConfiguration>(configuration.GetSection(configSectionName));
 
         return services.AddPortaAuthenticationCore();
@@ -85,6 +88,8 @@ public static class AuthenticationServiceExtensions
         this IServiceCollection services,
         Action<SessionAuthenticationConfiguration>? configureOptions = null)
     {
+        ArgumentNullException.ThrowIfNull(services);
+
         if (configureOptions is not null)
         {
             services.Configure(configureOptions);
@@ -456,15 +461,15 @@ public static class AuthenticationServiceExtensions
     private static IServiceCollection AddTokenServices(
         this IServiceCollection services)
     {
-        // Add named HttpClient for token operations with resilience. Both the client
-        // timeout and the resilience policy bind from the composed
+        // Add named HttpClient for token operations with resilience. No client.Timeout is
+        // set here: AddStandardResilienceHandler resets HttpClient.Timeout to infinite and
+        // owns all timeouts via AttemptTimeout/TotalRequestTimeout, which
+        // ConfigureTokenResilience binds from the composed
         // IOptions<SessionAuthenticationConfiguration> pipeline (read at resolve /
         // options-build time) rather than an eager registration-time snapshot, so
         // external Configure/PostConfigure of the configuration is honored.
-        services.AddHttpClient(TokenHttpClientName, (sp, client) =>
+        services.AddHttpClient(TokenHttpClientName, client =>
         {
-            var config = sp.GetRequiredService<IOptions<SessionAuthenticationConfiguration>>().Value;
-            client.Timeout = TimeSpan.FromSeconds(config.Resilience.RequestTimeoutSeconds);
             client.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
         })
@@ -585,20 +590,32 @@ public static class AuthenticationServiceExtensions
     /// This method is idempotent: calling it more than once applies the additional
     /// <paramref name="configureOptions"/> through the options pipeline but registers
     /// the named <see cref="HttpClient"/>, services, and authentication provider only once.
+    /// <para/>
+    /// The named introspection <see cref="HttpClient"/> is registered via
+    /// <see cref="ReferenceTokenServiceExtensions.AddReferenceTokenService(IServiceCollection, Action{ReferenceTokenAuthOptions}?, Action{HttpClient}?, Action{HttpStandardResilienceOptions}?)"/>,
+    /// whose standard resilience pipeline owns the effective timeouts
+    /// (attempt timeout 10s, total request timeout 30s by default). If that method already
+    /// registered the client, its resilience configuration wins and
+    /// <paramref name="configureResilience"/> is not applied.
     /// </remarks>
     /// <param name="services">The service collection</param>
     /// <param name="configureOptions">Action to configure <see cref="ReferenceTokenAuthOptions"/></param>
+    /// <param name="configureResilience">Optional action to configure the introspection client's resilience pipeline (timeouts, retries, circuit breaker)</param>
     /// <returns>The service collection for chaining</returns>
     public static IServiceCollection AddReferenceTokenAuthentication(
         this IServiceCollection services,
-        Action<ReferenceTokenAuthOptions> configureOptions)
+        Action<ReferenceTokenAuthOptions> configureOptions,
+        Action<HttpStandardResilienceOptions>? configureResilience = null)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configureOptions);
+
         services.Configure(configureOptions);
 
-        // Idempotency guard: AddHttpClient(name, ...) configurations accumulate, so a
-        // second call would nest another resilience handler and duplicate the Accept
-        // header on the introspection client, and the plain AddScoped registration
-        // below would run the provider twice per request through the composite.
+        // Idempotency guard: a second call would duplicate the plain AddScoped
+        // registration below, running the provider twice per request through the
+        // composite. (The named introspection client is guarded separately inside
+        // AddReferenceTokenService.)
         if (services.Any(d => d.ServiceType == typeof(ReferenceTokenAuthenticationMarker)))
         {
             return services;
@@ -606,15 +623,26 @@ public static class AuthenticationServiceExtensions
 
         services.AddSingleton<ReferenceTokenAuthenticationMarker>();
 
-        services.AddHttpClient(ReferenceTokenService.HttpClientName, client =>
-        {
-            client.Timeout = TimeSpan.FromSeconds(30);
-            client.DefaultRequestHeaders.Accept.Add(
-                new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
-        })
-        .AddStandardResilienceHandler();
+        // Validate options up-front so a misconfigured BFF fails at boot - mirroring
+        // the OIDC fail-at-boot posture - rather than rejecting every request at
+        // introspection time (e.g. empty Authority). The runtime reads these options
+        // via IOptionsMonitor.CurrentValue for hot reload; this covers the initial
+        // snapshot only.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<
+                IValidateOptions<ReferenceTokenAuthOptions>,
+                ReferenceTokenAuthOptionsValidator>());
+        services.AddOptions<ReferenceTokenAuthOptions>().ValidateOnStart();
 
-        services.TryAddSingleton<IReferenceTokenService, ReferenceTokenService>();
+        // Delegate the named introspection HttpClient + IReferenceTokenService to the
+        // single owner of that registration. A previous inline AddHttpClient here set
+        // client.Timeout = 30s, which AddStandardResilienceHandler silently overrides
+        // with an infinite timeout - the effective timeouts live in the resilience
+        // pipeline, configurable via configureResilience. Sharing the registration also
+        // prevents a consumer combining both entry points from nesting a second
+        // resilience handler on the same named client.
+        services.AddReferenceTokenService(configureResilience: configureResilience);
+
         services.TryAddScoped<ReferenceTokenAuthProvider>();
         services.AddScoped<IAuthenticationProviderRegistration>(sp =>
             new AuthenticationProviderRegistration(sp.GetRequiredService<ReferenceTokenAuthProvider>()));
@@ -660,6 +688,9 @@ public static class AuthenticationServiceExtensions
         this IServiceCollection services,
         Action<JwtBearerAuthOptions> configureOptions)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configureOptions);
+
         services.Configure(configureOptions);
 
         // Idempotency guard: a second AddJwtBearer() registers the Bearer scheme twice,
@@ -739,6 +770,8 @@ public static class AuthenticationServiceExtensions
     public static IServiceCollection AddPortaAuthProvider<TProvider>(this IServiceCollection services)
         where TProvider : class, IAuthenticationProvider
     {
+        ArgumentNullException.ThrowIfNull(services);
+
         services.AddScoped<TProvider>();
         services.AddScoped<IAuthenticationProviderRegistration>(sp =>
             new AuthenticationProviderRegistration(sp.GetRequiredService<TProvider>()));
@@ -758,6 +791,9 @@ public static class AuthenticationServiceExtensions
         Func<IServiceProvider, TProvider> implementationFactory)
         where TProvider : class, IAuthenticationProvider
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(implementationFactory);
+
         services.AddScoped<TProvider>(implementationFactory);
         services.AddScoped<IAuthenticationProviderRegistration>(sp =>
             new AuthenticationProviderRegistration(sp.GetRequiredService<TProvider>()));
@@ -775,7 +811,7 @@ public static class AuthenticationServiceExtensions
 
     /// <summary>
     /// Marker registration recording that
-    /// <see cref="AddReferenceTokenAuthentication(IServiceCollection, Action{ReferenceTokenAuthOptions})"/>
+    /// <see cref="AddReferenceTokenAuthentication(IServiceCollection, Action{ReferenceTokenAuthOptions}, Action{HttpStandardResilienceOptions})"/>
     /// has already run, making repeated calls no-ops for service registration
     /// (options configuration still composes).
     /// </summary>

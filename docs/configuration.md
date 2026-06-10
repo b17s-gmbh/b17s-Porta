@@ -324,6 +324,24 @@ When `AddPortaAuthentication` is called, `SessionAuthenticationConfigurationVali
 - `SessionAuthentication.SessionTimeoutInMin` is not positive
 - `SessionAuthentication.Cookie.ExpireTimeSpanMinutes` is not positive
 - `SessionAuthentication.Cookie.SecurePolicy` or `Cookie.SameSite` is not one of the recognized values (see [Cookie Security](#cookie-security))
+- `SessionAuthentication.DataProtection.KeyLifetimeDays` is below 7 (ASP.NET Core Data Protection requires a new-key lifetime of at least one week)
+
+When `AddPortaCore` is called, `PortaCoreOptionsValidator` (registered with `ValidateOnStart`) rejects startup if:
+- `PortaCore.DefaultTimeout` is not positive
+- `PortaCore.TokenRefreshSkew` is negative
+- `PortaCore.MaxBodyLogLength` is below `-1` (`-1` = unlimited, `0` = no body logs)
+- `PortaCore.IdpErrorBodyMaxBytes` is negative or above 1 MiB
+
+`PortaCore.MaxRetryAttempts` below 1 is *not* an error - it is the documented way to disable retries app-wide. Likewise, non-positive `MaxBackendResponseBytes` / `MaxRawForwardResponseBytes` / `RawForwardReadIdleTimeout` values disable the respective cap.
+
+When `AddReferenceTokenAuthentication` is called, `ReferenceTokenAuthOptionsValidator` (registered with `ValidateOnStart`) rejects startup if:
+- `Authority` is missing or is not an absolute `http`/`https` URL
+- `TokenHeaderName` is empty
+- exactly one of `ClientId` / `ClientSecret` is set (introspection credentials are only sent when both are configured)
+- `DefaultCacheDuration` is not positive, or `MaxCacheDuration` is below `DefaultCacheDuration`
+- `ValidateAudience` is `true` but both `ValidAudiences` and `ValidClientIds` are empty (every token would be rejected at request time)
+
+Reference-token options are re-read on appsettings reload; startup validation covers the initial values only.
 
 Additional startup failures from other parts of the wiring:
 - A transformer endpoint using `WithUserToken()` references a host outside `PortaCore.TrustedHosts` (thrown during endpoint mapping; see [Trusted Hosts](authentication.md#trusted-hosts)).

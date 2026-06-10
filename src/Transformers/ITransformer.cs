@@ -58,13 +58,22 @@ public interface IRawTransformer
 }
 
 /// <summary>
+/// Non-generic marker implemented by every transformer interface
+/// (<see cref="ITransformer{TRequest, TResponse}"/> and <see cref="ITransformer{TResponse}"/>).
+/// Exists so registration helpers like
+/// <c>AddTransformer&lt;T&gt;()</c> / <c>AddTransformerTypes(params Type[])</c> can verify at
+/// compile time / registration time that a type is actually a transformer.
+/// </summary>
+public interface ITransformer;
+
+/// <summary>
 /// Base interface for all request/response transformers.
 /// Transformers act as middleware between incoming requests and backend API calls,
 /// with built-in authentication, validation, and transformation capabilities.
 /// </summary>
 /// <typeparam name="TRequest">The request body type (or empty for no body)</typeparam>
 /// <typeparam name="TResponse">The response body type</typeparam>
-public interface ITransformer<TRequest, TResponse>
+public interface ITransformer<TRequest, TResponse> : ITransformer
 {
     /// <summary>
     /// Transforms an incoming request and forwards it to the backend service.
@@ -81,7 +90,7 @@ public interface ITransformer<TRequest, TResponse>
 /// with built-in authentication, validation, and transformation capabilities.
 /// </summary>
 /// <typeparam name="TResponse">The response body type</typeparam>
-public interface ITransformer<TResponse>
+public interface ITransformer<TResponse> : ITransformer
 {
     /// <summary>
     /// Transforms an incoming request and forwards it to the backend service.

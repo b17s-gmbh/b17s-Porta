@@ -51,11 +51,12 @@ public static class ReferenceTokenServiceExtensions
 
         services.AddSingleton<ReferenceTokenServiceMarker>();
 
-        // Register the named HttpClient with resilience
-        var httpClientBuilder = services
+        // Register the named HttpClient with resilience. No client.Timeout is set here:
+        // AddStandardResilienceHandler resets HttpClient.Timeout to infinite and owns
+        // the effective timeouts via AttemptTimeout/TotalRequestTimeout below.
+        services
             .AddHttpClient(ReferenceTokenService.HttpClientName, client =>
             {
-                client.Timeout = TimeSpan.FromSeconds(30);
                 client.DefaultRequestHeaders.Accept.Add(
                     new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
 

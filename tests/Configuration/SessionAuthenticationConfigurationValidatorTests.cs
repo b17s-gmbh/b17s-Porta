@@ -138,6 +138,37 @@ public class SessionAuthenticationConfigurationValidatorTests
         Assert.True(result.Succeeded, string.Join("; ", result.Failures ?? []));
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(6)]
+    [InlineData(-1)]
+    public void KeyLifetimeDaysBelowSeven_Fails(int days)
+    {
+        // KeyManagementOptions.NewKeyLifetime rejects lifetimes under one week, but
+        // only deep inside Data Protection key management on the first
+        // protect/unprotect - the validator surfaces it at boot instead.
+        var options = ValidBaseline();
+        options.DataProtection.KeyLifetimeDays = days;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Failures!,
+            f => f.Contains("DataProtection.KeyLifetimeDays", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void KeyLifetimeDaysOfExactlySeven_IsValid()
+    {
+        var options = ValidBaseline();
+        options.DataProtection.KeyLifetimeDays = 7;
+
+        var result = Validate(options);
+
+        Assert.True(result.Succeeded, string.Join("; ", result.Failures ?? []));
+    }
+
     [Fact]
     public void OidcAuthOptionsValidator_AppliesSameRule()
     {

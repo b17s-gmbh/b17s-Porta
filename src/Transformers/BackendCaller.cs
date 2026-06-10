@@ -19,9 +19,11 @@ namespace b17s.Porta.Transformers;
 /// </summary>
 /// <remarks>
 /// <paramref name="accessTokenRefresh"/> and <paramref name="httpContextAccessor"/> are optional:
-/// they are only registered when Porta authentication is added, and only consulted on the
-/// refresh-on-401 path (<see cref="PortaCoreOptions.RefreshBackendTokenOn401"/>, default on).
-/// When either is absent a backend 401 is surfaced unchanged.
+/// they are only registered when Porta authentication is added. They are consulted on the
+/// refresh-on-401 path (<see cref="PortaCoreOptions.RefreshBackendTokenOn401"/>, default on) -
+/// when either is absent a backend 401 is surfaced unchanged - and
+/// <paramref name="httpContextAccessor"/> additionally supplies the authenticated user's claims
+/// to <see cref="BackendAuthContext.Claims"/>.
 /// <para>
 /// Registered scoped, so a single instance is shared by every backend call in a request - including
 /// the parallel legs of an aggregation. That lets the refresh-on-401 path serialise the user-token
@@ -639,6 +641,7 @@ public sealed class BackendCaller(
             var authContext = new BackendAuthContext
             {
                 AccessToken = accessToken,
+                Claims = GetUserClaims(),
                 BackendRequest = request,
                 // Thread the request's cancellation through. Token-exchange handlers do an STS
                 // round-trip here; with CancellationToken.None a hung token endpoint ignored the
@@ -671,6 +674,28 @@ public sealed class BackendCaller(
         }
 
         return null; // No error
+    }
+
+    /// <summary>
+    /// Snapshots the authenticated user's claims for <see cref="BackendAuthContext.Claims"/>.
+    /// Empty when there is no authenticated user or the host did not register
+    /// <see cref="IHttpContextAccessor"/>; first value wins for repeated claim types.
+    /// </summary>
+    private IReadOnlyDictionary<string, string> GetUserClaims()
+    {
+        var user = httpContextAccessor?.HttpContext?.User;
+        if (user?.Identity?.IsAuthenticated != true)
+        {
+            return new Dictionary<string, string>();
+        }
+
+        var claims = new Dictionary<string, string>();
+        foreach (var claim in user.Claims)
+        {
+            claims.TryAdd(claim.Type, claim.Value);
+        }
+
+        return claims;
     }
 
     /// <summary>

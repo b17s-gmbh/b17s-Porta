@@ -1,4 +1,4 @@
-using b17s.Porta.Extensions;
+using b17s.Porta.Transformers;
 
 namespace b17s.Porta.Configuration;
 
@@ -115,7 +115,7 @@ public sealed class PortaCoreOptions
     /// backend response stream before aborting the call. Defeats slow-loris backends
     /// that dribble bytes to hold a BFF worker open indefinitely.
     ///
-    /// Default: 30 seconds.
+    /// Default: 30 seconds. Set to a non-positive value to disable the idle cap.
     /// </summary>
     public TimeSpan RawForwardReadIdleTimeout { get; set; } = TimeSpan.FromSeconds(30);
 

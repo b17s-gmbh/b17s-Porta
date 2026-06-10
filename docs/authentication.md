@@ -45,6 +45,14 @@ You don't typically construct or interact with `SessionAuthProvider` directly - 
 | `UseBasicAuthForIntrospection` | `true` | Send credentials via HTTP Basic auth. When `false`, `client_id` / `client_secret` are sent in the request body. |
 | `TokenTypeHint` | `access_token` | Optional `token_type_hint` parameter (RFC 7662 §2.1). |
 
+The introspection `HttpClient` uses the standard resilience pipeline (retry + circuit breaker + timeouts; attempt timeout 10 s, total request timeout 30 s by default). Override it via the optional `configureResilience` parameter:
+
+```csharp
+builder.Services.AddReferenceTokenAuthentication(
+    options => { /* ... */ },
+    configureResilience: r => r.AttemptTimeout.Timeout = TimeSpan.FromSeconds(5));
+```
+
 #### Token binding - audience / issuer / client_id
 
 Without these checks, **any active token issued by the same authority for any other relying party** would be accepted by this BFF (RFC 7662 audience-confusion vulnerability). Defaults are strict; loosen only when you fully trust the introspection endpoint and understand the consequences.
@@ -304,7 +312,7 @@ builder.Services.AddPortaCore(o => o.RefreshBackendTokenOn401 = false);
 
 ### Custom Backend Auth Handler
 
-Implement `IBackendAuthHandler` to add custom authentication policies:
+Implement `IBackendAuthHandler` to add custom authentication policies. The `BackendAuthContext` passed to the handler carries the user's access token (`AccessToken`), the authenticated user's claims (`Claims`, first value wins for repeated claim types; empty for anonymous requests), the outgoing `BackendRequest`, and the request's `CancellationToken`:
 
 ```csharp
 public class HmacAuthHandler : IBackendAuthHandler

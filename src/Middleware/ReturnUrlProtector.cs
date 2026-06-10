@@ -69,9 +69,11 @@ internal sealed class ReturnUrlProtector : IReturnUrlProtector
     }
 }
 
+// EventId 9900 block: 9800-9811 belongs to SessionAdminMiddleware, so this
+// category gets its own block to keep EventId-based filtering unambiguous.
 internal static partial class ReturnUrlProtectorLogging
 {
-    [LoggerMessage(EventId = 9800, Level = LogLevel.Trace,
+    [LoggerMessage(EventId = 9900, Level = LogLevel.Trace,
         Message = "Failed to unprotect return-url token (expired, tampered, or wrong key)")]
     public static partial void ReturnUrlUnprotectFailed(this ILogger logger, Exception ex);
 }

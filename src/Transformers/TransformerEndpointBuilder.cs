@@ -715,18 +715,22 @@ public sealed class TransformerEndpointBuilder<TTransformer, TResponse>
 internal sealed class RequestBodyDeserializationException(JsonException inner)
     : Exception("Failed to deserialize the request body.", inner);
 
-/// <summary>High-performance logging for transformer endpoints.</summary>
+/// <summary>
+/// High-performance logging for transformer endpoints.
+/// EventId range 14040-14049 is reserved for this category (14100+ belongs to
+/// the token services) so EventId-based filtering can tell them apart.
+/// </summary>
 internal static partial class TransformerEndpointLogging
 {
-    [LoggerMessage(EventId = 14100, Level = LogLevel.Error,
+    [LoggerMessage(EventId = 14040, Level = LogLevel.Error,
         Message = "Transformer {TransformerName} backend call failed")]
     public static partial void TransformerBackendError(this ILogger logger, string transformerName, Exception ex);
 
-    [LoggerMessage(EventId = 14101, Level = LogLevel.Error,
+    [LoggerMessage(EventId = 14041, Level = LogLevel.Error,
         Message = "Transformer {TransformerName} execution failed")]
     public static partial void TransformerError(this ILogger logger, string transformerName, Exception ex);
 
-    [LoggerMessage(EventId = 14102, Level = LogLevel.Warning,
+    [LoggerMessage(EventId = 14042, Level = LogLevel.Warning,
         Message = "Transformer {TransformerName} request body deserialization failed")]
     public static partial void TransformerRequestDeserializationError(this ILogger logger, string transformerName, Exception ex);
 }

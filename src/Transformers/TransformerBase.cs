@@ -567,41 +567,43 @@ public abstract class TransformerBase<TResponse> : ITransformer<TResponse>
 
 /// <summary>
 /// High-performance logging for transformers using compile-time source generators.
+/// EventId range 14050-14059 is reserved for this category; 14000-14017 belongs to
+/// <see cref="BackendCaller"/> so EventId-based filtering can tell them apart.
 /// </summary>
 internal static partial class TransformerLogging
 {
     [LoggerMessage(
-        EventId = 14002,
+        EventId = 14050,
         Level = LogLevel.Warning,
         Message = "Backend call failed in parallel execution")]
     public static partial void BackendCallFailed(ILogger logger, Exception ex);
 
     [LoggerMessage(
-        EventId = 14003,
+        EventId = 14051,
         Level = LogLevel.Warning,
         Message = "Required claim '{ClaimType}' not found in authentication context")]
     public static partial void RequiredClaimNotFound(ILogger logger, string claimType);
 
     [LoggerMessage(
-        EventId = 14004,
+        EventId = 14052,
         Level = LogLevel.Debug,
         Message = "Observed sibling backend task fault ({ExceptionType}) after the first failure cancelled the parallel batch; original exception is rethrown")]
     public static partial void SiblingTaskFaultObserved(ILogger logger, string exceptionType);
 
     [LoggerMessage(
-        EventId = 14005,
+        EventId = 14053,
         Level = LogLevel.Warning,
         Message = "WriteErrorResponseAsync called after the response had already started; status {StatusCode} was not written")]
     public static partial void ErrorResponseAfterStart(ILogger logger, int statusCode);
 
     [LoggerMessage(
-        EventId = 14006,
+        EventId = 14054,
         Level = LogLevel.Warning,
         Message = "Backend returned {StatusCode}; detail masked from the client response: {Error}")]
     public static partial void BackendErrorMasked(ILogger logger, int statusCode, string error);
 
     [LoggerMessage(
-        EventId = 14007,
+        EventId = 14055,
         Level = LogLevel.Warning,
         Message = "Backend call failed in parallel execution ({ExceptionType}); result coerced to null. Type only - exception messages can carry URLs/secrets")]
     public static partial void BackendCallFailedSafe(ILogger logger, string exceptionType);

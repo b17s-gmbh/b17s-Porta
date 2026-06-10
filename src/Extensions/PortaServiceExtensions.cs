@@ -71,6 +71,8 @@ public static class PortaServiceExtensions
         this IServiceCollection services,
         Action<PortaCoreOptions>? configureOptions = null)
     {
+        ArgumentNullException.ThrowIfNull(services);
+
         // Configure core options through the standard options pipeline so consumer
         // Configure<PortaCoreOptions>(...) and PostConfigure<PortaCoreOptions>(...) calls
         // compose correctly. Using Options.Create(...) here would shadow the entire
@@ -78,12 +80,6 @@ public static class PortaServiceExtensions
         if (configureOptions is not null)
         {
             services.Configure(configureOptions);
-        }
-        else
-        {
-            // Ensure IOptions<PortaCoreOptions> can still be resolved even when no
-            // explicit configuration is supplied.
-            services.AddOptions<PortaCoreOptions>();
         }
 
         // Idempotency guard: AddHttpClient(name, ...) configurations accumulate on the
@@ -98,6 +94,15 @@ public static class PortaServiceExtensions
         }
 
         services.AddSingleton<PortaCoreMarker>();
+
+        // Validate core options up-front so a misconfigured BFF fails at boot rather
+        // than on the first backend call (HttpClient.Timeout and the resilience pipeline
+        // both throw on invalid values only when the first client is created). The
+        // AddOptions call also ensures IOptions<PortaCoreOptions> resolves when no
+        // explicit configuration was supplied.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IValidateOptions<PortaCoreOptions>, PortaCoreOptionsValidator>());
+        services.AddOptions<PortaCoreOptions>().ValidateOnStart();
 
         // Register HttpContextAccessor (required for token forwarding)
         services.AddHttpContextAccessor();
@@ -152,13 +157,13 @@ public static class PortaServiceExtensions
             AllowAutoRedirect = false,
         });
 
-        // Register HttpClient with retries (used when EnableRetries = true). Both the client
-        // timeout and the resilience policy bind from the composed IOptions<PortaCoreOptions>
-        // pipeline rather than an eager snapshot, so consumer Configure/PostConfigure is honored.
-        services.AddHttpClient(BackendCaller.HttpClientNameWithRetries, (sp, client) =>
+        // Register HttpClient with retries (used when EnableRetries = true). No client.Timeout
+        // is set here: AddStandardResilienceHandler resets HttpClient.Timeout to infinite and
+        // owns all timeouts via AttemptTimeout/TotalRequestTimeout, which ConfigureBackendResilience
+        // binds from the composed IOptions<PortaCoreOptions> pipeline (so consumer
+        // Configure/PostConfigure is honored).
+        services.AddHttpClient(BackendCaller.HttpClientNameWithRetries, client =>
         {
-            var coreOptions = sp.GetRequiredService<IOptions<PortaCoreOptions>>().Value;
-            client.Timeout = coreOptions.DefaultTimeout;
             client.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
         })
@@ -335,6 +340,9 @@ public static class PortaServiceExtensions
         IConfiguration configuration,
         string sectionName = PortaCoreOptions.SectionName)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
         // Bind the documented "BackendService" section so the built-in BasicAuth and
         // TokenExchange handlers (which consume IOptions<BackendServiceOptions>) pick up
         // appsettings-supplied credentials and audiences. Without this, consumers following
@@ -394,6 +402,9 @@ public static class PortaServiceExtensions
         this IServiceCollection services,
         Action<OidcAuthOptions> configureOptions)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configureOptions);
+
         services.Configure(configureOptions);
 
         return services.AddPortaOidcAuthCore();
@@ -425,6 +436,9 @@ public static class PortaServiceExtensions
         IConfiguration configuration,
         string sectionName = OidcAuthOptions.SectionName)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
         // Bind through the options pipeline (not a one-shot snapshot) so the binding
         // is reload-aware and composes with consumer Configure/PostConfigure - the
         // same contract as AddPortaAuthentication(IConfiguration).
@@ -534,6 +548,8 @@ public static class PortaServiceExtensions
     public static IServiceCollection AddPortaAuthHandler<THandler>(this IServiceCollection services)
         where THandler : class, IBackendAuthHandler
     {
+        ArgumentNullException.ThrowIfNull(services);
+
         // Append to the IBackendAuthHandler enumeration. The registry built in
         // AddPortaCore consumes IEnumerable<IBackendAuthHandler> at resolve time, so
         // multiple calls (and mixing of typed/factory variants) compose additively.
@@ -562,6 +578,9 @@ public static class PortaServiceExtensions
         Func<IServiceProvider, THandler> implementationFactory)
         where THandler : class, IBackendAuthHandler
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(implementationFactory);
+
         // Append to the IBackendAuthHandler enumeration via factory. TryAddEnumerable
         // de-duplicates by implementation type, so the same THandler is only added
         // once even across mixed typed/factory calls.
@@ -588,6 +607,9 @@ public static class PortaServiceExtensions
         this IServiceCollection services,
         params Type[] handlerTypes)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(handlerTypes);
+
         // Validate all types implement IBackendAuthHandler, then append each to the
         // IBackendAuthHandler enumeration. TryAddEnumerable de-duplicates by
         // implementation type, so calling this twice with overlapping types is safe.

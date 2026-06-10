@@ -75,8 +75,10 @@ public sealed class BackendAuthContext
     public string? AccessToken { get; init; }
 
     /// <summary>
-    /// Claims from the authenticated user (if available).
-    /// Key is the claim type, value is the claim value.
+    /// Claims from the authenticated user, or empty when the request has no authenticated user
+    /// (or the host did not register <c>IHttpContextAccessor</c>).
+    /// Key is the claim type, value is the claim value. When the user carries multiple claims of
+    /// the same type (e.g. several <c>role</c> claims), the first value wins.
     /// </summary>
     public IReadOnlyDictionary<string, string> Claims { get; init; } = new Dictionary<string, string>();
 
@@ -84,11 +86,6 @@ public sealed class BackendAuthContext
     /// The backend request being authenticated.
     /// </summary>
     public required BackendRequest BackendRequest { get; init; }
-
-    /// <summary>
-    /// Additional properties that can be passed from transformers.
-    /// </summary>
-    public IDictionary<string, object> Properties { get; init; } = new Dictionary<string, object>();
 
     /// <summary>
     /// Cancellation token for the request.

@@ -170,17 +170,19 @@ public sealed class TrustedHostValidator : ITrustedHostValidator
     }
 }
 
+// EventId range 14030-14039 is reserved for this category (14100+ belongs to
+// the token services) so EventId-based filtering can tell them apart.
 internal static partial class TrustedHostValidatorLogging
 {
-    [LoggerMessage(EventId = 14100, Level = LogLevel.Debug,
+    [LoggerMessage(EventId = 14030, Level = LogLevel.Debug,
         Message = "Registered trusted host pattern: {Host} -> {Pattern}")]
     public static partial void RegisteredTrustedHostPattern(this ILogger<TrustedHostValidator> logger, string host, Regex pattern);
 
-    [LoggerMessage(EventId = 14101, Level = LogLevel.Information,
+    [LoggerMessage(EventId = 14031, Level = LogLevel.Information,
         Message = "Trusted host validation enabled with {Count} patterns")]
     public static partial void TrustedHostValidationEnabled(this ILogger<TrustedHostValidator> logger, int count);
 
-    [LoggerMessage(EventId = 14102, Level = LogLevel.Debug,
+    [LoggerMessage(EventId = 14032, Level = LogLevel.Debug,
         Message = "Validated trusted host for endpoint '{Endpoint}': {Url}")]
     public static partial void ValidatedTrustedHost(this ILogger<TrustedHostValidator> logger, string endpoint, string url);
 }

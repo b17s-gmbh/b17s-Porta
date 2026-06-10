@@ -102,6 +102,22 @@ internal sealed class SessionAuthenticationConfigurationValidator
             }
         }
 
+        // KeyManagementOptions.NewKeyLifetime rejects lifetimes under one week, but only
+        // when the value is applied - deep inside Data Protection key management on the
+        // first protect/unprotect. Surface it here instead, where the message can point
+        // at the actual config knob.
+        if (options.DataProtection is null)
+        {
+            errors.Add("SessionAuthentication.DataProtection must be set.");
+        }
+        else if (options.DataProtection.KeyLifetimeDays < 7)
+        {
+            errors.Add(
+                $"SessionAuthentication.DataProtection.KeyLifetimeDays must be >= 7. " +
+                $"Got: {options.DataProtection.KeyLifetimeDays}. ASP.NET Core Data Protection " +
+                "requires a new-key lifetime of at least one week.");
+        }
+
         if (options.Resilience is not null)
         {
             if (options.Resilience.RequestTimeoutSeconds <= 0)

@@ -270,27 +270,12 @@ public sealed class AggregatorResults
     private readonly IReadOnlyDictionary<string, object?> _results;
     private readonly IReadOnlyDictionary<string, BackendCallOutcome> _outcomes;
 
-    internal AggregatorResults(IReadOnlyDictionary<string, object?> results)
-        : this(results, BuildLegacyOutcomes(results))
-    {
-    }
-
     internal AggregatorResults(
         IReadOnlyDictionary<string, object?> results,
         IReadOnlyDictionary<string, BackendCallOutcome> outcomes)
     {
         _results = results;
         _outcomes = outcomes;
-    }
-
-    private static IReadOnlyDictionary<string, BackendCallOutcome> BuildLegacyOutcomes(IReadOnlyDictionary<string, object?> results)
-    {
-        var dict = new Dictionary<string, BackendCallOutcome>(results.Count);
-        foreach (var (k, v) in results)
-        {
-            dict[k] = v is null ? BackendCallOutcome.ReturnedNull : BackendCallOutcome.Success;
-        }
-        return dict;
     }
 
     /// <summary>

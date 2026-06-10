@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 
 namespace b17s.Porta.Tests.Extensions;
@@ -208,8 +209,18 @@ public class CompositeRegistrationIdempotencyTests
         var services = new ServiceCollection();
         services.AddLogging();
 
-        services.AddReferenceTokenAuthentication(options => options.Authority = "https://idp.example.com");
-        services.AddReferenceTokenAuthentication(options => options.ClientId = "test-client");
+        // Config is split across the two calls (and kept valid under the startup
+        // validator) to prove later calls still compose through the options pipeline.
+        services.AddReferenceTokenAuthentication(options =>
+        {
+            options.Authority = "https://idp.example.com";
+            options.ValidAudiences = ["api"];
+        });
+        services.AddReferenceTokenAuthentication(options =>
+        {
+            options.ClientId = "test-client";
+            options.ClientSecret = "test-secret";
+        });
 
         Assert.Single(services, d => d.ServiceType == typeof(IAuthenticationProviderRegistration));
 
@@ -221,5 +232,57 @@ public class CompositeRegistrationIdempotencyTests
         var options = sp.GetRequiredService<IOptions<ReferenceTokenAuthOptions>>().Value;
         Assert.Equal("https://idp.example.com", options.Authority);
         Assert.Equal("test-client", options.ClientId);
+    }
+
+    [Fact]
+    public void AddReferenceTokenAuthentication_ConfigureResilience_ReachesIntrospectionPipeline()
+    {
+        // The introspection client's effective timeouts live in the standard resilience
+        // pipeline (AddStandardResilienceHandler resets HttpClient.Timeout to infinite),
+        // so the configureResilience hook must reach the named pipeline options.
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        services.AddReferenceTokenAuthentication(
+            options =>
+            {
+                options.Authority = "https://idp.example.com";
+                options.ClientId = "test-client";
+                options.ClientSecret = "test-secret";
+                options.ValidAudiences = ["api"];
+            },
+            configureResilience: r => r.AttemptTimeout.Timeout = TimeSpan.FromSeconds(3));
+
+        var resilience = services.BuildServiceProvider()
+            .GetRequiredService<IOptionsMonitor<HttpStandardResilienceOptions>>()
+            .Get(ReferenceTokenService.HttpClientName + "-standard");
+
+        Assert.Equal(TimeSpan.FromSeconds(3), resilience.AttemptTimeout.Timeout);
+    }
+
+    [Fact]
+    public void AddReferenceTokenAuthentication_CombinedWithAddReferenceTokenService_NamedClientConfiguredOnce()
+    {
+        // Both entry points used to register the introspection client independently
+        // behind separate markers; combining them nested a second resilience handler
+        // and doubled the Accept header. The auth path now delegates to
+        // AddReferenceTokenService, so the named client has a single owner.
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        services.AddReferenceTokenService();
+        services.AddReferenceTokenAuthentication(options =>
+        {
+            options.Authority = "https://idp.example.com";
+            options.ClientId = "test-client";
+            options.ClientSecret = "test-secret";
+            options.ValidAudiences = ["api"];
+        });
+
+        var client = services.BuildServiceProvider()
+            .GetRequiredService<IHttpClientFactory>()
+            .CreateClient(ReferenceTokenService.HttpClientName);
+
+        Assert.Single(client.DefaultRequestHeaders.Accept);
     }
 }

@@ -258,32 +258,13 @@ public sealed class AggregatingTransformerTests
     }
 
     // -----------------------------
-    // AggregatorResults surface (legacy constructor + explicit-outcome constructor)
+    // AggregatorResults surface
     // -----------------------------
-
-    [Fact]
-    public void AggregatorResults_LegacyConstructor_InfersOutcomesFromNullness()
-    {
-        // The single-arg constructor builds outcomes from the results dict so older
-        // call sites still get Success/ReturnedNull, but never see Threw.
-        var transformer = new AggregatorIntrospector();
-        var results = transformer.BuildLegacyResults(new Dictionary<string, object?>
-        {
-            ["alpha"] = new UserInfo { Id = "a" },
-            ["beta"] = null,
-        });
-
-        Assert.Equal(BackendCallOutcome.Success, results.GetOutcome("alpha"));
-        Assert.Equal(BackendCallOutcome.ReturnedNull, results.GetOutcome("beta"));
-        Assert.False(results.Threw("alpha"));
-        Assert.False(results.Threw("beta"));
-    }
 
     [Fact]
     public void AggregatorResults_Get_ReturnsTypedValueOrNullForFailures()
     {
-        var transformer = new AggregatorIntrospector();
-        var results = transformer.BuildLegacyResults(new Dictionary<string, object?>
+        var results = BuildResults(new Dictionary<string, object?>
         {
             ["user"] = new UserInfo { Id = "u1", Name = "ada" },
             ["product"] = null,
@@ -300,8 +281,7 @@ public sealed class AggregatingTransformerTests
         // A present, non-null value whose runtime type doesn't match T is a programmer
         // error - Get<T> disagreeing with the Backend<T> registration. Surfacing it stops
         // a type-parameter typo from masquerading as "the backend had no data".
-        var transformer = new AggregatorIntrospector();
-        var results = transformer.BuildLegacyResults(new Dictionary<string, object?>
+        var results = BuildResults(new Dictionary<string, object?>
         {
             ["user"] = new UserInfo { Id = "u1", Name = "ada" },
         });
@@ -314,9 +294,8 @@ public sealed class AggregatingTransformerTests
     [Fact]
     public void AggregatorResults_GetOrDefault_FillsInWhenAbsent()
     {
-        var transformer = new AggregatorIntrospector();
         var fallback = new UserInfo { Id = "fallback" };
-        var results = transformer.BuildLegacyResults(new Dictionary<string, object?>
+        var results = BuildResults(new Dictionary<string, object?>
         {
             ["user"] = null,
         });
@@ -328,8 +307,7 @@ public sealed class AggregatingTransformerTests
     [Fact]
     public void AggregatorResults_HasResult_TrueOnlyForNonNull()
     {
-        var transformer = new AggregatorIntrospector();
-        var results = transformer.BuildLegacyResults(new Dictionary<string, object?>
+        var results = BuildResults(new Dictionary<string, object?>
         {
             ["user"] = new UserInfo(),
             ["product"] = null,
@@ -343,8 +321,7 @@ public sealed class AggregatingTransformerTests
     [Fact]
     public void AggregatorResults_AllSucceeded_RequiresEveryNamedResult()
     {
-        var transformer = new AggregatorIntrospector();
-        var results = transformer.BuildLegacyResults(new Dictionary<string, object?>
+        var results = BuildResults(new Dictionary<string, object?>
         {
             ["a"] = new UserInfo(),
             ["b"] = new UserInfo(),
@@ -359,8 +336,7 @@ public sealed class AggregatingTransformerTests
     [Fact]
     public void AggregatorResults_SuccessCount_AndNames_ExposeBookkeeping()
     {
-        var transformer = new AggregatorIntrospector();
-        var results = transformer.BuildLegacyResults(new Dictionary<string, object?>
+        var results = BuildResults(new Dictionary<string, object?>
         {
             ["a"] = new UserInfo(),
             ["b"] = null,
@@ -377,8 +353,7 @@ public sealed class AggregatingTransformerTests
         // Defensive lookup: an unknown name shouldn't throw - it reads as
         // ReturnedNull so MapResults can treat it uniformly with backends that
         // produced no payload.
-        var transformer = new AggregatorIntrospector();
-        var results = transformer.BuildLegacyResults(new Dictionary<string, object?>());
+        var results = BuildResults(new Dictionary<string, object?>());
 
         Assert.Equal(BackendCallOutcome.ReturnedNull, results.GetOutcome("missing"));
         Assert.False(results.Threw("missing"));
@@ -470,23 +445,14 @@ public sealed class AggregatingTransformerTests
     }
 
     /// <summary>
-    /// Test helper that exposes the internal <see cref="AggregatorResults"/> legacy
-    /// constructor - it's internal in production but reachable via reflection so we
-    /// can exercise it directly rather than driving it through a full transform.
+    /// Builds an <see cref="AggregatorResults"/> via its internal constructor (reachable
+    /// through InternalsVisibleTo), inferring Success/ReturnedNull outcomes from value
+    /// nullness so the surface can be exercised without driving a full transform.
     /// </summary>
-    private sealed class AggregatorIntrospector
-    {
-        public AggregatorResults BuildLegacyResults(IReadOnlyDictionary<string, object?> results)
-        {
-            var ctor = typeof(AggregatorResults).GetConstructor(
-                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
-                binder: null,
-                types: new[] { typeof(IReadOnlyDictionary<string, object?>) },
-                modifiers: null);
-            Assert.NotNull(ctor);
-            return (AggregatorResults)ctor!.Invoke(new object[] { results });
-        }
-    }
+    private static AggregatorResults BuildResults(IReadOnlyDictionary<string, object?> results)
+        => new(results, results.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value is null ? BackendCallOutcome.ReturnedNull : BackendCallOutcome.Success));
 
     // -----------------------------
     // Payload types used by the test aggregators
