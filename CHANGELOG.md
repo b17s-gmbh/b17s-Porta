@@ -7,14 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-06-13
+## [0.1.0] - 2026-06-14
 ### Added
 - BFF Transformer (TransformerBase, PassThroughTransformer, AuthenticatedTransformer, MultiBackendTransformer, AggregatingTransformer)
 - Multi-backend aggregation (AggregatingTransformer)
 - Zero-code pass-through (PassThroughTransformer)
 - Per-backend authentication policies (None, BasicAuth, BearerToken, TokenExchange)
 - Fluent endpoint builder (WithAuth, WithTimeout, WithRetries, WithTokenExchange)
-- Startup configuration validatio
+- Startup configuration validation
 - Multiple auth providers
 - Token lifecycle
 - Session administration

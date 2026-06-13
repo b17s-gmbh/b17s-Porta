@@ -7,7 +7,7 @@
 Porta is your way to create completely customizable, easy-to-implement, boiler-plate code free Backend-For-Frontend (BFF) services with opinionated, sensible defaults.
 Its architecture hooks into ASP.Net Core's minimal API design, and extends it via transformer-based API aggregation with multi-frontend/backend authentication support.
 
-> **IMPORTANT** Porta is not yet battle-hardened. For this reason it is adviced to not use it on edge yet, but have a reverse proxy in front of it.
+> **IMPORTANT** Porta is not yet battle-hardened. For this reason it is advised to not use it on edge yet, but have a reverse proxy in front of it.
 
 ## Features
 
