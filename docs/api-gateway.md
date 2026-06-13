@@ -13,14 +13,15 @@ Use b17s.Porta as a gateway when you want a **small, code-first, opinionated edg
 This is the strongest gateway use case. Each route can declare its own backend auth policy:
 
 ```csharp
-app.MapPassThrough<OrderResponse>("GET", "/api/orders/{id}")
-    .ToGet($"{ordersUrl}/orders/{{id}}")
+app.MapPassThrough<OrderResponse>()
+    .FromGet("/api/orders/{id}")
+    .ToGet("https://orders.internal/orders/{id}")
     .WithTokenExchange("orders-api")
     .Build();
 
 app.MapRawForward()
     .FromGet("/api/legacy/{**path}")
-    .ToGet($"{legacyUrl}/{{**path}}")
+    .ToGet("https://legacy.internal/{**path}")
     .WithBackendAuth(BackendAuthPolicies.BasicAuth)
     .Build();
 ```
@@ -72,8 +73,9 @@ app.UseSession();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapPassThrough<ProductsResponse>("GET", "/api/products")
-    .ToGet($"{productsUrl}/products")
+app.MapPassThrough<ProductsResponse>()
+    .FromGet("/api/products")
+    .ToGet("https://products.internal/products")
     .Build()
     .RequireRateLimiting("per-user");
 ```

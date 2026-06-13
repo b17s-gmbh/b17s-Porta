@@ -296,32 +296,4 @@ public static class PassThroughExtensions
 
         return new(endpoints, endpoints.ServiceProvider);
     }
-
-    /// <summary>
-    /// Creates a zero-code pass-through endpoint with a combined fluent API.
-    /// Shorter syntax for simple cases.
-    /// </summary>
-    /// <typeparam name="TResponse">The response type from the backend</typeparam>
-    /// <param name="endpoints">The endpoint route builder</param>
-    /// <param name="method">The HTTP method</param>
-    /// <param name="routePattern">The route pattern</param>
-    /// <returns>A fluent builder for configuring the pass-through endpoint</returns>
-    /// <example>
-    /// <code>
-    /// app.MapPassThrough&lt;ProductsResponse&gt;("GET", "/api/products")
-    ///     .ToBackend("GET", $"{backendUrl}/products")
-    ///     .WithBackendAuth(BackendAuthPolicies.BasicAuth)
-    ///     .Build();
-    /// </code>
-    /// </example>
-    public static PassThroughEndpointBuilder<TResponse> MapPassThrough<TResponse>(
-        this IEndpointRouteBuilder endpoints,
-        string method,
-        string routePattern)
-    {
-        ArgumentNullException.ThrowIfNull(endpoints);
-
-        return new PassThroughEndpointBuilder<TResponse>(endpoints, endpoints.ServiceProvider)
-            .FromRoute(method, routePattern);
-    }
 }

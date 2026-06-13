@@ -24,7 +24,7 @@ namespace b17s.Porta.Transformers;
 /// // Zero-code proxy (no transformer class needed)
 /// app.MapRawForward()
 ///     .FromRoute("GET", "/api/files/{id}")
-///     .ToBackend("GET", $"{fileServiceUrl}/files/{{id}}")
+///     .ToBackend("GET", "https://files.internal/files/{id}")
 ///     .Build();
 ///
 /// // With hooks for header manipulation

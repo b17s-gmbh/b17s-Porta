@@ -147,27 +147,6 @@ public sealed class PassThroughEndpointBuilderTests
             options.EnsureSuccessStatusCode();
             Assert.Equal(2, backend.RecordedCalls.Count);
         }
-
-        [Fact]
-        public async Task MapPassThrough_WithVerbAndRoute_Overload_RegistersEndpoint()
-        {
-            // The two-argument overload bundles FromRoute() into the registration — a single
-            // call that's documented as the "short" form. A regression that drops the verb or
-            // route arg would silently produce a 404; cover both ends.
-            var backend = new MockBackendCaller()
-                .SetupResponse("https://backend.test/x", new EchoResponse { Echoed = "ok" });
-            using var bff = await CreateBffAsync(endpoints => endpoints
-                .MapPassThrough<EchoResponse>("GET", "/api/x")
-                .ToBackend("GET", "https://backend.test/x")
-                .AllowAnonymous()
-                .Build(), backend);
-
-            var response = await bff.GetTestServer().CreateClient()
-                .GetAsync("/api/x", TestContext.Current.CancellationToken);
-
-            response.EnsureSuccessStatusCode();
-            Assert.Single(backend.RecordedCalls);
-        }
     }
 
     public sealed class BackendDispatch

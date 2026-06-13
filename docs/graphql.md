@@ -56,7 +56,7 @@ public class ProductTransformer : TransformerBase<ProductDto>
 // Endpoint registration - client sees REST
 app.MapTransformer<ProductTransformer, ProductDto>()
     .FromGet("/api/products/{id}")
-    .ToGraphQL($"{graphUrl}/my-api")  // GraphQL endpoint
+    .ToGraphQL("https://graphql.internal/my-api")  // GraphQL endpoint
     .WithBackendAuth(BackendAuthPolicies.BearerToken)
     .Build();
 ```
@@ -184,7 +184,7 @@ public class CreateOrderTransformer : TransformerBase<CreateOrderRequest, OrderD
 // POST endpoint for mutation
 app.MapTransformer<CreateOrderTransformer, CreateOrderRequest, OrderDto>()
     .FromPost("/api/orders")
-    .ToGraphQL($"{graphUrl}/my-api")
+    .ToGraphQL("https://graphql.internal/my-api")
     .WithBackendAuth(BackendAuthPolicies.BearerToken)
     .Build();
 ```

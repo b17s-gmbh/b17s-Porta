@@ -7,7 +7,7 @@ The BFF framework uses a fluent builder pattern for configuring endpoints. The v
 ```csharp
 app.MapTransformer<MyTransformer, MyResponse>()
     .FromGet("/api/products")
-    .ToGet($"{backendUrl}/products")
+    .ToGet("https://backend.internal/products")
     .Build();
 ```
 
@@ -21,8 +21,8 @@ Instead of passing the verb as a string to `.FromRoute("METHOD", pattern)` / `.T
 .FromGet("/api/products")
 
 // ...as are these:
-.ToBackend("GET", $"{backendUrl}/products")
-.ToGet($"{backendUrl}/products")
+.ToBackend("GET", "https://backend.internal/products")
+.ToGet("https://backend.internal/products")
 
 // All supported incoming-route helpers:
 .FromGet("/api/products")
@@ -34,11 +34,11 @@ Instead of passing the verb as a string to `.FromRoute("METHOD", pattern)` / `.T
 .FromOptions("/api/products")
 
 // All supported backend helpers (GET/POST/PUT/DELETE/PATCH):
-.ToGet($"{backendUrl}/products")
-.ToPost($"{backendUrl}/products")
-.ToPut($"{backendUrl}/products/{{id}}")
-.ToDelete($"{backendUrl}/products/{{id}}")
-.ToPatch($"{backendUrl}/products/{{id}}")
+.ToGet("https://backend.internal/products")
+.ToPost("https://backend.internal/products")
+.ToPut("https://backend.internal/products/{id}")
+.ToDelete("https://backend.internal/products/{id}")
+.ToPatch("https://backend.internal/products/{id}")
 ```
 
 Reach for the string form (`.ToBackend("HEAD", url)`) only for verbs without a shorthand. The backend helpers keep the optional `ContentType` argument: `.ToPost(url, ContentType.Xml)`. `.ToAny(url)` (method-preserving proxy) and `.ToGraphQL(url)` round out the backend vocabulary.
@@ -51,13 +51,13 @@ For endpoints that should handle any HTTP method:
 // Match any HTTP method on the route
 app.MapTransformer<ResourceTransformer, ResourceResponse>()
     .FromAny("/api/resource/{id}")
-    .ToGet($"{backend}/resource/{{id}}")  // Fixed backend method
+    .ToGet("https://backend.internal/resource/{id}")  // Fixed backend method
     .Build();
 
 // Method-preserving proxy: incoming method = backend method
 app.MapTransformer<ProxyTransformer, object>()
     .FromAny("/api/proxy/{**path}")
-    .ToAny($"{backend}/{{**path}}")  // POST in = POST out, GET in = GET out
+    .ToAny("https://backend.internal/{**path}")  // POST in = POST out, GET in = GET out
     .Build();
 ```
 
@@ -77,24 +77,26 @@ Two placeholder forms, with different encoding:
 ```csharp
 // Single segment: {id} encodes the value as ONE path segment. A '/' in the value becomes
 // %2F, so it can never inject an extra segment or pivot the authority.
-app.MapPassThrough<ProductResponse>("GET", "/api/products/{id}")
-    .ToGet($"{backend}/products/{{id}}")
+app.MapPassThrough<ProductResponse>()
+    .FromGet("/api/products/{id}")
+    .ToGet("https://backend.internal/products/{id}")
     .Build();
-// /api/products/42        -> {backend}/products/42
-// /api/products/a%2Fb     -> {backend}/products/a%2Fb   (slash stays encoded)
+// /api/products/42        -> https://backend.internal/products/42
+// /api/products/a%2Fb     -> https://backend.internal/products/a%2Fb   (slash stays encoded)
 
 // Catch-all: {*path} or {**path} is the subtree-proxy opt-in. The matched value's '/'
 // separators are PRESERVED so a nested request path maps to a nested backend path. Each
 // individual segment is still encoded (so '@'/':' inside a segment can't pivot the authority).
-app.MapRawForward("GET", "/api/proxy/{**path}")
-    .ToGet($"{backend}/{{**path}}")
+app.MapRawForward()
+    .FromGet("/api/proxy/{**path}")
+    .ToGet("https://backend.internal/{**path}")
     .Build();
-// /api/proxy/a/b/c        -> {backend}/a/b/c
+// /api/proxy/a/b/c        -> https://backend.internal/a/b/c
 ```
 
 Use a catch-all placeholder in **both** the route and the backend template when proxying a
-subtree. Note the backend template must use the catch-all syntax too (`{{**path}}`), not a bare
-`{{path}}` — a bare placeholder is single-segment and would percent-encode the separators
+subtree. Note the backend template must use the catch-all syntax too (`{**path}`), not a bare
+`{path}` — a bare placeholder is single-segment and would percent-encode the separators
 (`a%2Fb%2Fc`).
 
 Regardless of form, the following are **rejected** with an `InvalidRouteValueException` (surfaced
@@ -117,27 +119,27 @@ Use `.When()` to add a runtime predicate for conditional endpoint selection:
 app.MapTransformer<ProductsV2Transformer, ProductsResponse>()
     .FromGet("/api/products")
     .When(ctx => ctx.Request.Headers["X-Api-Version"] == "2")
-    .ToGet($"{v2Backend}/products")
+    .ToGet("https://products-v2.internal/products")
     .Build();
 
 // A/B testing - route based on cookie
 app.MapTransformer<NewCheckoutTransformer, CheckoutResponse>()
     .FromPost("/api/checkout")
     .When(ctx => ctx.Request.Cookies["feature_new_checkout"] == "true")
-    .ToPost($"{newCheckoutBackend}/checkout")
+    .ToPost("https://checkout.internal/checkout")
     .Build();
 
 // Feature flag - route based on query parameter
 app.MapTransformer<ExperimentalTransformer, Response>()
     .FromGet("/api/search")
     .When(ctx => ctx.Request.Query["experimental"] == "true")
-    .ToGet($"{experimentalBackend}/search")
+    .ToGet("https://search-experimental.internal/search")
     .Build();
 
 // Fallback endpoint (no constraint - catches all remaining requests)
 app.MapTransformer<ProductsTransformer, ProductsResponse>()
     .FromGet("/api/products")
-    .ToGet($"{defaultBackend}/products")
+    .ToGet("https://products.internal/products")
     .Build();
 ```
 
@@ -155,8 +157,8 @@ Configure multiple backends for aggregation:
 app.MapTransformer<MyTransformer, MyResponse>()
     .FromGet("/api/aggregated")
     .ToBackends(b => b
-        .ToPost("UserInfo", $"{userServiceUrl}/userinfo").WithAuth(BackendAuthPolicies.BasicAuth)
-        .ToGet("Products", $"{productServiceUrl}/products").WithAuth(BackendAuthPolicies.BearerToken))
+        .ToPost("UserInfo", "https://users.internal/userinfo").WithAuth(BackendAuthPolicies.BasicAuth)
+        .ToGet("Products", "https://products.internal/products").WithAuth(BackendAuthPolicies.BearerToken))
     .Build();
 ```
 
@@ -212,27 +214,27 @@ builder.Services.AddPortaCore(options =>
 // Uses default (RequireAuthorizationByDefault)
 app.MapTransformer<ProtectedTransformer, Response>()
     .FromGet("/api/protected")
-    .ToGet($"{backendUrl}/data")
+    .ToGet("https://backend.internal/data")
     .Build();
 
 // Explicitly require auth with a specific policy
 app.MapTransformer<AdminTransformer, Response>()
     .FromGet("/api/admin")
-    .ToGet($"{backendUrl}/admin")
+    .ToGet("https://backend.internal/admin")
     .RequireAuth("AdminPolicy")
     .Build();
 
 // Allow anonymous access
 app.MapTransformer<PublicTransformer, Response>()
     .FromGet("/api/public")
-    .ToGet($"{backendUrl}/public")
+    .ToGet("https://backend.internal/public")
     .AllowAnonymous()
     .Build();
 
 // Anonymous with optional auth - populate auth context if available
 app.MapTransformer<ProductTransformer, ProductResponse>()
     .FromGet("/api/products/{id}")
-    .ToGet($"{backendUrl}/products/{{id}}")
+    .ToGet("https://backend.internal/products/{id}")
     .AllowAnonymousWithOptionalAuth()
     .Build();
 ```

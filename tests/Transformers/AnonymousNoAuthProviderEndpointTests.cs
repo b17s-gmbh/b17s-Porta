@@ -34,7 +34,8 @@ public sealed class AnonymousNoAuthProviderEndpointTests
     {
         var capture = new OkBackendHandler();
         using var bff = await CreateBffAsync(capture, app => app.UseEndpoints(endpoints =>
-            endpoints.MapPassThrough<EchoResponse>("GET", "/api/products")
+            endpoints.MapPassThrough<EchoResponse>()
+                .FromGet("/api/products")
                 .ToBackend("GET", "https://backend.test/products")
                 .AllowAnonymous()
                 .Build()));

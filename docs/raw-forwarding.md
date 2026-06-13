@@ -96,7 +96,7 @@ For simple proxy endpoints without any transformation, use `MapRawForward()` - n
 // Zero-code file proxy
 app.MapRawForward()
     .FromGet("/api/files/{id}")
-    .ToGet($"{fileServiceUrl}/files/{{id}}")
+    .ToGet("https://files.internal/files/{id}")
     .WithBackendAuth(BackendAuthPolicies.BasicAuth)
     .AllowAnonymous()
     .Build();
@@ -104,13 +104,8 @@ app.MapRawForward()
 // File upload proxy
 app.MapRawForward()
     .FromPost("/api/uploads")
-    .ToPost($"{uploadServiceUrl}/files")
+    .ToPost("https://uploads.internal/files")
     .WithBackendAuth(BackendAuthPolicies.BearerToken)
-    .Build();
-
-// Shorter syntax
-app.MapRawForward("GET", "/api/files/{id}")
-    .ToGet($"{fileServiceUrl}/files/{{id}}")
     .Build();
 ```
 
@@ -153,7 +148,7 @@ builder.Services.AddRawForwardTransformer<SecureFileTransformer>();
 // Endpoint
 app.MapRawForward<SecureFileTransformer>()
     .FromGet("/api/secure-files/{id}")
-    .ToGet($"{fileServiceUrl}/files/{{id}}")
+    .ToGet("https://files.internal/files/{id}")
     .Build();
 ```
 
@@ -231,14 +226,16 @@ If a specific endpoint needs a sensitive header to pass through (e.g. forwarding
 
 ```csharp
 // Forward Authorization header - to ANY destination
-app.MapRawForward("GET", "/api/proxy/{*path}")
-    .ToGet($"{internalApi}/{{**path}}")
+app.MapRawForward()
+    .FromGet("/api/proxy/{*path}")
+    .ToGet("https://internal.example.com/{**path}")
     .AllowForwardingHeaders(["Authorization"])
     .Build();
 
 // Forward Authorization header - only when the destination host is trusted
-app.MapRawForward("GET", "/api/proxy/{*path}")
-    .ToGet($"{internalApi}/{{**path}}")
+app.MapRawForward()
+    .FromGet("/api/proxy/{*path}")
+    .ToGet("https://internal.example.com/{**path}")
     .AllowForwardingHeaders(
         headers: ["Authorization", "X-Tenant-Id"],
         destinationHosts: ["internal.example.com"])

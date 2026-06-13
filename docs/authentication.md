@@ -291,8 +291,9 @@ When a backend returns `401` on a user-token policy, Porta treats it as a stale-
 
 ```csharp
 // Nothing to enable - this just works for BearerToken / TokenExchange backends:
-app.MapPassThrough<OrderResponse>("GET", "/api/orders/{id}")
-    .ToGet($"{ordersUrl}/orders/{{id}}")
+app.MapPassThrough<OrderResponse>()
+    .FromGet("/api/orders/{id}")
+    .ToGet("https://orders.internal/orders/{id}")
     .WithBackendAuth(BackendAuthPolicies.BearerToken)
     .RequireAuth()
     .Build();
@@ -358,8 +359,8 @@ Multi-backend transformers support per-backend authentication configuration:
 app.MapTransformer<MyTransformer, MyResponse>()
     .FromGet("/api/aggregated")
     .ToBackends(b => b
-        .ToPost("UserInfo", $"{userServiceUrl}/userinfo").WithAuth(BackendAuthPolicies.BasicAuth)
-        .ToGet("Products", $"{productServiceUrl}/products").WithAuth(BackendAuthPolicies.BearerToken))
+        .ToPost("UserInfo", "https://users.internal/userinfo").WithAuth(BackendAuthPolicies.BasicAuth)
+        .ToGet("Products", "https://products.internal/products").WithAuth(BackendAuthPolicies.BearerToken))
     .Build();
 ```
 

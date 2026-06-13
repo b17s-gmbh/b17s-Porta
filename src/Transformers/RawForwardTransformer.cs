@@ -43,7 +43,7 @@ namespace b17s.Porta.Transformers;
 /// // Register and use
 /// app.MapRawForward&lt;SecureFileTransformer&gt;()
 ///     .FromRoute("GET", "/api/secure-files/{id}")
-///     .ToBackend("GET", $"{fileServiceUrl}/files/{{id}}")
+///     .ToBackend("GET", "https://files.internal/files/{id}")
 ///     .Build();
 /// </code>
 /// </example>

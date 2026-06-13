@@ -38,7 +38,8 @@ builder.Services.AddPortaCore();
 
 var app = builder.Build();
 
-app.FromGet<ProductsResponse>("/api/products")
+app.MapPassThrough<ProductsResponse>()
+    .FromGet("/api/products")
     .ToGet("https://products-api.internal/products")
     .AllowAnonymous()
     .Build();
@@ -50,33 +51,76 @@ app.Run();
 
 ### With OIDC Authentication
 
-```csharp // TODO: FIX Example. Not good to mix introducing auth and transformer in one go.
+Same pass-through endpoint as above, but now it requires a logged-in user and forwards their
+access token to the backend. The only new ingredients are the OIDC pipeline registration
+(`AddPortaAuthentication`, bound from configuration) and dropping `.AllowAnonymous()` in favour of
+`.RequireAuth()`. See the [OIDC Endpoints](docs/oidc.md) guide for the login/logout middleware.
+
+```csharp
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddPortaCore(options => {
-    options.TrustedHosts = ["https://api.internal.example.com"];
+    options.TrustedHosts = ["https://products-api.internal"];
 });
 
+// Wire up the OIDC pipeline (cookie + OIDC handler + ticket store) from configuration.
 builder.Services.AddPortaAuthentication(builder.Configuration);
-builder.Services.AddTransformer<UserProfileTransformer>();
 
 var app = builder.Build();
 
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapTransformer<UserProfileTransformer, UserProfile>()
-    .FromGet("/api/profile")
-    .ToPost("https://api.internal.example.com/userinfo")
-    .WithBackendAuth(BackendAuthPolicies.BearerToken)
+app.MapPassThrough<ProductsResponse>()
+    .FromGet("/api/products")
+    .ToGet("https://products-api.internal/products")
+    .RequireAuth()                                      // 401 unless the user is logged in
+    .WithBackendAuth(BackendAuthPolicies.BearerToken)   // forward the user's token to the backend
     .Build();
 
 app.Run();
 ```
 
-// TODO: Add RAW passthrough example
+### Raw Passthrough (Binary, Files, Non-JSON)
 
-// TODO: Add example introducing transformer inkcluding a small transformer
+When you don't want to parse or reshape the response — file downloads, streaming, XML — use
+`MapRawForward()`. The body is streamed straight through; no response type is needed. See
+[Raw Forwarding](docs/raw-forwarding.md) for header handling and size/timeout limits.
+
+```csharp
+app.MapRawForward()
+    .FromGet("/api/files/{id}")
+    .ToGet("https://files-api.internal/files/{id}")
+    .RequireAuth()
+    .WithBackendAuth(BackendAuthPolicies.BearerToken)
+    .Build();
+```
+
+### Introducing a Transformer
+
+A transformer is where you reshape the backend response. Inherit a base class (here
+`PassThroughTransformer<T>`, overriding `TransformResponse` to strip an internal field), register it
+with `AddTransformer<T>()`, then map it with `MapTransformer<,>()`. See
+[Transformers](docs/transformers.md) for the full hierarchy.
+
+```csharp
+public class ProductsTransformer : PassThroughTransformer<ProductsResponse>
+{
+    // Strip the internal cost price the frontend should never see.
+    protected override ProductsResponse TransformResponse(ProductsResponse response, TransformerContext context)
+        => response with { Items = response.Items.Select(i => i with { CostPrice = null }).ToList() };
+}
+```
+
+```csharp
+builder.Services.AddTransformer<ProductsTransformer>();
+
+app.MapTransformer<ProductsTransformer, ProductsResponse>()
+    .FromGet("/api/products")
+    .ToGet("https://products-api.internal/products")
+    .AllowAnonymous()
+    .Build();
+```
 
 ## Documentation
 
@@ -110,20 +154,18 @@ seeded credentials, exposed endpoints, and how to run the functional/E2E suite.
 
 ## Transformer Hierarchy
 
-Choose the right base class for your use case:
-
-// TODO: Add link for each transformer to the matching doc and and example
+Choose the right base class for your use case. Each links to its guide and a worked example:
 
 | Base Class | Use Case | Code Required |
 |------------|----------|---------------|
-| `MapPassThrough<T>()` | Zero-code pass-through | Config only |
-| `PassThroughTransformer<T>` | Simple pass-through | 1 line |
-| `AuthenticatedTransformer<T>` | Auth required, no request body | 1 line |
-| `AuthenticatedTransformer<TReq, TRes>` | Auth + backend request body | 2-3 lines |
-| `AggregatingTransformer<T>` | Multi-backend aggregation | ~15 lines |
-| `TransformerBase<T>` | Full custom control | Varies |
+| [`MapPassThrough<T>()`](docs/transformers.md#level-1-zero-code-pass-through) | Zero-code pass-through | Config only |
+| [`PassThroughTransformer<T>`](docs/transformers.md#level-1-zero-code-pass-through) | Simple pass-through | 1 line |
+| [`AuthenticatedTransformer<T>`](docs/transformers.md#level-2-authenticated-endpoints) | Auth required, no request body | 1 line |
+| [`AuthenticatedTransformer<TReq, TRes>`](docs/transformers.md#level-2-authenticated-endpoints) | Auth + backend request body | 2-3 lines |
+| [`AggregatingTransformer<T>`](docs/transformers.md#level-3-multi-backend-aggregation) | Multi-backend aggregation | ~15 lines |
+| [`TransformerBase<T>`](docs/transformers.md#level-4-custom-logic) | Full custom control | Varies |
 
-## Backend Authentication // TODO: Add Custom and explain that you can implement interface to support custom auth
+## Backend Authentication
 
 Built-in policies:
 
@@ -133,6 +175,7 @@ Built-in policies:
 | `BasicAuth` | HTTP Basic auth from config | No |
 | `BearerToken` | Forward user's token | Yes |
 | `TokenExchange` | Exchange for backend token (needs an audience - see [Authentication](docs/authentication.md#backend-authentication)) | Yes |
+| *Custom* | Anything else (HMAC, API keys, client credentials) — implement `IBackendAuthHandler` | Depends |
 
 Per-backend configuration:
 
@@ -140,7 +183,41 @@ Per-backend configuration:
 app.MapTransformer<MyTransformer, Response>()
     .FromGet("/api/data")
     .ToBackends(b => b
-        .ToGet("Users", $"{usersUrl}/api").WithAuth(BackendAuthPolicies.BearerToken)
-        .ToGet("Products", $"{productsUrl}/api").WithAuth(BackendAuthPolicies.BasicAuth))
+        .ToGet("Users", "https://users.internal/api").WithAuth(BackendAuthPolicies.BearerToken)
+        .ToGet("Products", "https://products.internal/api").WithAuth(BackendAuthPolicies.BasicAuth))
     .Build();
 ```
+
+### Custom Policies
+
+The built-in policies aren't a closed set. Implement `IBackendAuthHandler` to add your own (HMAC
+signing, API keys, client-credentials, etc.). The handler exposes a `PolicyName`, and `ApplyAuthAsync`
+mutates the outgoing request — add headers, sign the body, attach a token. Register it with
+`AddPortaAuthHandler<T>()`, then reference it by name via `WithBackendAuth("...")`:
+
+```csharp
+public class HmacAuthHandler : IBackendAuthHandler
+{
+    public string PolicyName => "HmacAuth";
+
+    public Task ApplyAuthAsync(HttpRequestMessage request, BackendAuthContext context)
+    {
+        request.Headers.Add("X-Signature", ComputeHmacSignature(request));
+        request.Headers.Add("X-Timestamp", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+        return Task.CompletedTask;
+    }
+}
+
+// Registration
+builder.Services.AddPortaAuthHandler<HmacAuthHandler>();
+
+// Usage — reference the custom handler by its PolicyName
+app.MapPassThrough<Response>()
+    .FromGet("/api/partner-data")
+    .ToGet("https://partner-api.example.com/data")
+    .WithBackendAuth("HmacAuth")
+    .Build();
+```
+
+See [Authentication](docs/authentication.md#custom-backend-auth-handler) for the full `BackendAuthContext`
+contract and registering multiple handlers.

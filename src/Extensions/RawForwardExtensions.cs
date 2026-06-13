@@ -41,7 +41,7 @@ public static class RawForwardExtensions
     /// // Zero-code proxy - no transformer class needed
     /// app.MapRawForward()
     ///     .FromGet("/api/files/{id}")
-    ///     .ToGet($"{fileServiceUrl}/files/{{id}}")
+    ///     .ToGet("https://files.internal/files/{id}")
     ///     .WithBackendAuth(BackendAuthPolicies.BasicAuth)
     ///     .AllowAnonymous()
     ///     .Build();
@@ -49,14 +49,14 @@ public static class RawForwardExtensions
     /// // Download proxy with auth
     /// app.MapRawForward()
     ///     .FromGet("/api/documents/{id}/download")
-    ///     .ToGet($"{docServiceUrl}/documents/{{id}}/content")
+    ///     .ToGet("https://docs.internal/documents/{id}/content")
     ///     .RequireAuth()
     ///     .Build();
     ///
     /// // Upload proxy
     /// app.MapRawForward()
     ///     .FromPost("/api/uploads")
-    ///     .ToPost($"{uploadServiceUrl}/files")
+    ///     .ToPost("https://uploads.internal/files")
     ///     .WithBackendAuth(BackendAuthPolicies.BearerToken)
     ///     .Build();
     /// </code>
@@ -107,31 +107,13 @@ public static class RawForwardExtensions
     /// // Endpoint
     /// app.MapRawForward&lt;SecureFileTransformer&gt;()
     ///     .FromGet("/api/secure-files/{id}")
-    ///     .ToGet($"{fileServiceUrl}/files/{{id}}")
+    ///     .ToGet("https://files.internal/files/{id}")
     ///     .Build();
     /// </code>
     /// </example>
     public static RawForwardEndpointBuilder<TTransformer> MapRawForward<TTransformer>(this IEndpointRouteBuilder endpoints)
         where TTransformer : class, IRawTransformer
         => new(endpoints, endpoints.ServiceProvider);
-
-    /// <summary>
-    /// Creates a zero-code raw forwarding endpoint with combined fluent API.
-    /// Shorter syntax for simple cases.
-    /// </summary>
-    /// <param name="endpoints">The endpoint route builder</param>
-    /// <param name="method">The HTTP method</param>
-    /// <param name="routePattern">The route pattern</param>
-    /// <returns>A fluent builder for configuring the raw forward endpoint</returns>
-    /// <example>
-    /// <code>
-    /// app.MapRawForward("GET", "/api/files/{id}")
-    ///     .ToGet($"{fileServiceUrl}/files/{{id}}")
-    ///     .Build();
-    /// </code>
-    /// </example>
-    public static RawForwardEndpointBuilder<DefaultRawForwardTransformer> MapRawForward(this IEndpointRouteBuilder endpoints, string method, string routePattern)
-        => endpoints.MapRawForward().FromRoute(method, routePattern);
 
     /// <summary>
     /// Registers a raw forward transformer in the DI container.

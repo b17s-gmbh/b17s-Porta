@@ -22,7 +22,7 @@ For simple endpoints that just forward to a backend and return the response as-i
 // No transformer class required!
 app.MapPassThrough<ProductsResponse>()
     .FromGet("/api/products")
-    .ToGet($"{backendUrl}/products")
+    .ToGet("https://backend.internal/products")
     .WithBackendAuth(BackendAuthPolicies.BasicAuth)
     .AllowAnonymous()
     .Build();
@@ -35,20 +35,12 @@ app.MapPassThrough<ProductsResponse>()
 ```csharp
 app.MapPassThrough<ProductsResponse>()
     .FromGet("/api/products")
-    .ToGet($"{backendUrl}/products")   // == .ToBackend("GET", ...)
+    .ToGet("https://backend.internal/products")   // == .ToBackend("GET", ...)
     .AllowAnonymous()
     .Build();
 ```
 
 `ToGet`, `ToPost`, `ToPut`, `ToDelete`, and `ToPatch` are available, each taking the URL plus the optional `ContentType` argument.
-
-The two-argument shortcut `MapPassThrough<T>(method, route)` is still available for terse cases:
-
-```csharp
-app.MapPassThrough<ProductsResponse>("GET", "/api/products")
-    .ToGet($"{backendUrl}/products")
-    .Build();
-```
 
 Or inherit from `PassThroughTransformer<TResponse>` for minimal code:
 
@@ -120,8 +112,8 @@ builder.Services.AddTransformer<EnrichedUserProfileTransformer>();
 app.MapTransformer<EnrichedUserProfileTransformer, EnrichedUserProfile>()
     .FromGet("/api/profile")
     .ToBackends(b => b
-        .ToGet("UserInfo", $"{userServiceUrl}/userinfo")
-        .ToGet("ProductInfo", $"{productServiceUrl}/products"))
+        .ToGet("UserInfo", "https://users.internal/userinfo")
+        .ToGet("ProductInfo", "https://products.internal/products"))
     .RequireAuth()
     .WithBackendAuth(BackendAuthPolicies.BearerToken)
     .Build();
@@ -135,9 +127,9 @@ The `ToBackends(configure => ...)` overload takes a builder whose `ToGet/ToPost/
 
 ```csharp
 .ToBackends(b => b
-    .ToGet("UserInfo", $"{userServiceUrl}/userinfo")
+    .ToGet("UserInfo", "https://users.internal/userinfo")
         .WithAuth(BackendAuthPolicies.BearerToken)
-    .ToPost("Orders", $"{orderServiceUrl}/orders")
+    .ToPost("Orders", "https://orders.internal/orders")
         .WithTokenExchange("order-api")
         .WithRetries(3))
 ```
@@ -148,8 +140,8 @@ The older array form of `ToBackends(...)` still works if you prefer to build `Na
 
 ```csharp
 .ToBackends(
-    ("UserInfo", "GET", $"{userServiceUrl}/userinfo").WithAuth(BackendAuthPolicies.BearerToken),
-    new NamedBackendEndpoint { Name = "Orders", Method = "POST", UrlTemplate = $"{orderServiceUrl}/orders" })
+    ("UserInfo", "GET", "https://users.internal/userinfo").WithAuth(BackendAuthPolicies.BearerToken),
+    new NamedBackendEndpoint { Name = "Orders", Method = "POST", UrlTemplate = "https://orders.internal/orders" })
 ```
 
 ## Level 4: Custom Logic
@@ -289,7 +281,7 @@ The library supports multiple content types for backend communication.
 // Specify request content type for backend (the optional 2nd arg on the verb helpers)
 app.MapTransformer<LegacyTransformer, LegacyRequest, LegacyResponse>()
     .FromPost("/api/legacy")
-    .ToPost($"{legacyUrl}/soap-endpoint", ContentType.Xml)
+    .ToPost("https://legacy.internal/soap-endpoint", ContentType.Xml)
     .Build();
 ```
 
