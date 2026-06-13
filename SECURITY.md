@@ -21,7 +21,7 @@ When you report, please include as much of the following as you can:
 - Whether you have already disclosed this to anyone else, and any public references.
 - How you'd like to be credited in the advisory, if at all.
 
-We will acknowledge receipt within **5 business days** and aim to provide an initial assessment within **10 business days**. Critical issues that allow account takeover, unauthenticated bypass of authorization, or remote code execution are prioritized over everything else.
+We will acknowledge receipt within **10 business days** and aim to provide an initial assessment within **10 business days**. Critical issues that allow account takeover, unauthenticated bypass of authorization, or remote code execution are prioritized over everything else.
 
 ## Coordinated disclosure
 
@@ -73,8 +73,6 @@ Session IDs are credential-equivalent and are **never** logged raw — they appe
 
 By default, Porta redacts IdP error bodies and logs only the HTTP status when token refresh, exchange, introspection, or revocation fails. If you set `PortaCore:LogIdpErrorBodies=true` for debugging, those bodies are written at Debug truncated to `IdpErrorBodyMaxBytes` — and verbose IdPs (Keycloak, IdentityServer in dev mode, etc.) frequently echo the submitted refresh token, client secret, or PII back inside that JSON. Enable it only on a single instance, only temporarily, and only when you accept the risk.
 
-If you find an *unintended* log statement that emits a raw token, refresh token, cookie value, `Authorization` header, or `client_secret` at any level, please report it through the channels above — that is in scope.
-
 ## Known security-relevant configuration
 
 These are *intended* behaviors that operators should be aware of when threat-modeling their deployment:
@@ -86,7 +84,3 @@ These are *intended* behaviors that operators should be aware of when threat-mod
 - **`AllowAutoRedirect` is disabled** on the backend `HttpClient` to prevent leaking custom auth headers on cross-origin redirects.
 - **Raw-forward DoS caps are response-direction only.** `MaxRawForwardResponseBytes` and `RawForwardReadIdleTimeout` bound the backend→client stream. The client→backend (upload) direction has no per-endpoint cap by design; over-large and slow-loris uploads are delegated to Kestrel's global `MaxRequestBodySize` / `MinRequestBodyDataRate` / `RequestHeadersTimeout`, which operators should configure. See [`docs/raw-forwarding.md`](docs/raw-forwarding.md#request-direction--kestrel-reliance).
 - See [`docs/authentication.md`](docs/authentication.md) and [`docs/ha-deployment.md`](docs/ha-deployment.md) for the full picture.
-
-## Updates
-
-We use Dependabot (or equivalent) to track advisories on our dependencies. If you spot a CVE on a dependency we haven't yet picked up, feel free to open a regular PR or issue - that is not a security report.

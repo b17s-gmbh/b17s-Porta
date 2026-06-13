@@ -1,9 +1,13 @@
 # b17s.Porta
 
+[![CI](https://github.com/b17s-gmbh/b17s-Porta/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/b17s-gmbh/b17s-Porta/actions/workflows/ci.yml)
+[![NuGet](https://img.shields.io/nuget/v/b17s.Porta.svg)](https://www.nuget.org/packages/b17s.Porta/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Porta is your way to create completely customizable, easy-to-implement, boiler-plate code free Backend-For-Frontend (BFF) services with opinionated, sensible defaults.
 Its architecture hooks into ASP.Net Core's minimal API design, and extends it via transformer-based API aggregation with multi-frontend/backend authentication support.
 
-> **Pre-1.0 — review before production use.** Porta is safe behind a hardened reverse proxy with standard OIDC, session, or reference-token flows. Edge deployments (direct internet exposure, untrusted tenants, shared-host environments) need extra middleware hardening. Treat Porta's log stream as Secret-classified. See [SECURITY.md](SECURITY.md#deployment-posture) for the deployment posture and [log sensitivity](SECURITY.md#sensitive-data-in-logs) details.
+> **IMPORTANT** Porta is not yet battle-hardened. For this reason it is adviced to not use it on edge yet, but have a reverse proxy in front of it.
 
 ## Features
 
@@ -25,18 +29,16 @@ dotnet add package b17s.Porta
 
 ## Quick Start
 
-### Minimal Setup (No Auth)
+### Minimal Setup (Mapped Passthrough; No Auth)
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddPortaCore(options => {
-    options.DefaultTimeout = TimeSpan.FromSeconds(30);
-});
+builder.Services.AddPortaCore();
 
 var app = builder.Build();
 
-app.MapPassThrough<ProductsResponse>("GET", "/api/products")
+app.FromGet<ProductsResponse>("/api/products")
     .ToGet("https://products-api.internal/products")
     .AllowAnonymous()
     .Build();
@@ -48,7 +50,7 @@ app.Run();
 
 ### With OIDC Authentication
 
-```csharp
+```csharp // TODO: FIX Example. Not good to mix introducing auth and transformer in one go.
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddPortaCore(options => {
@@ -71,6 +73,10 @@ app.MapTransformer<UserProfileTransformer, UserProfile>()
 
 app.Run();
 ```
+
+// TODO: Add RAW passthrough example
+
+// TODO: Add example introducing transformer inkcluding a small transformer
 
 ## Documentation
 
@@ -106,6 +112,8 @@ seeded credentials, exposed endpoints, and how to run the functional/E2E suite.
 
 Choose the right base class for your use case:
 
+// TODO: Add link for each transformer to the matching doc and and example
+
 | Base Class | Use Case | Code Required |
 |------------|----------|---------------|
 | `MapPassThrough<T>()` | Zero-code pass-through | Config only |
@@ -115,7 +123,7 @@ Choose the right base class for your use case:
 | `AggregatingTransformer<T>` | Multi-backend aggregation | ~15 lines |
 | `TransformerBase<T>` | Full custom control | Varies |
 
-## Backend Authentication
+## Backend Authentication // TODO: Add Custom and explain that you can implement interface to support custom auth
 
 Built-in policies:
 

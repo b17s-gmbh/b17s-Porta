@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>b17s.Porta</RootNamespace>
     <OutputType>Library</OutputType>
+    <Deterministic>true</Deterministic>
     <!-- Public XML docs ship in the package (.nupkg) so consumers get IntelliSense. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
@@ -20,6 +21,7 @@
     <PackageTags>bff;backend-for-frontend;aspnetcore;oidc;authentication;api-gateway;reverse-proxy;transformer;opentelemetry</PackageTags>
     <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
     <PackageProjectUrl>https://www.nuget.org/packages/b17s.Porta/</PackageProjectUrl>
     <RepositoryUrl>https://github.com/b17s-gmbh/b17s-Porta</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
@@ -34,6 +36,7 @@
   <ItemGroup>
     <None Include="..\LICENSE" Pack="true" PackagePath="\" />
     <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\icon.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>
