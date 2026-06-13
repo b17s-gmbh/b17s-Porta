@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    environment: production
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version from tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$tag' is not a valid SemVer release tag (expected vX.Y.Z or vX.Y.Z-suffix)."
+            exit 1
+          fi
+          package_version="${tag#v}"
+          # AssemblyVersion/FileVersion must be numeric (a.b.c[.d]); strip any pre-release suffix.
+          assembly_version="${package_version%%-*}.0"
+
+          echo "Tag:              $tag"
+          echo "Package version:  $package_version"
+          echo "Assembly version: $assembly_version"
+          {
+            echo "tag=$tag"
+            echo "package_version=$package_version"
+            echo "assembly_version=$assembly_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate CHANGELOG
+        id: changelog
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
+        run: |
+          set -euo pipefail
+
+          # 1) Top released heading must match the tag version.
+          top_version=$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?\]' CHANGELOG.md \
+            | head -n 1 \
+            | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' || true)
+          if [ -z "$top_version" ]; then
+            echo "::error::No released version heading (e.g. '## [1.0.0]') found in CHANGELOG.md."
+            exit 1
+          fi
+          if [ "$top_version" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Tag version '$PACKAGE_VERSION' does not match top CHANGELOG heading '$top_version'. Update CHANGELOG.md or retag."
+            exit 1
+          fi
+
+          # 2) The Unreleased section must be empty (no content between '## [Unreleased]' and the next '## ').
+          unreleased_body=$(awk '
+            /^## \[Unreleased\]/ { in_unreleased = 1; next }
+            in_unreleased && /^## / { exit }
+            in_unreleased { print }
+          ' CHANGELOG.md | tr -d '[:space:]')
+          if [ -n "$unreleased_body" ]; then
+            echo "::error::'## [Unreleased]' section in CHANGELOG.md is not empty. Move its entries under the '## [$PACKAGE_VERSION]' heading before tagging."
+            exit 1
+          fi
+
+          # 3) Extract the release notes body for this version (content under '## [X.Y.Z]' up to the next '## ').
+          notes_file="$(mktemp)"
+          awk -v ver="$PACKAGE_VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { in_section = 1; next }
+            in_section && /^## / { exit }
+            in_section { print }
+          ' CHANGELOG.md > "$notes_file"
+
+          # Trim leading/trailing blank lines.
+          sed -i -e '/./,$!d' -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$notes_file" || true
+
+          echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
+          echo "----- Release notes preview -----"
+          cat "$notes_file"
+          echo "---------------------------------"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore b17s.Porta.slnx
+
+      - name: Build
+        run: >-
+          dotnet build b17s.Porta.slnx
+          --configuration Release
+          --no-restore
+          -p:Version=${{ steps.version.outputs.package_version }}
+          -p:PackageVersion=${{ steps.version.outputs.package_version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.assembly_version }}
+          -p:FileVersion=${{ steps.version.outputs.assembly_version }}
+          -p:ContinuousIntegrationBuild=true
+
+      - name: Test
+        run: >-
+          dotnet test tests/b17s.Porta.Tests.csproj
+          --configuration Release
+          --no-build
+          --
+          --report-xunit-trx
+          --report-xunit-trx-filename test-results.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'
+
+      - name: Pack
+        run: >-
+          dotnet pack src/b17s.Porta.csproj
+          --configuration Release
+          --no-build
+          --output ./artifacts
+          -p:Version=${{ steps.version.outputs.package_version }}
+          -p:PackageVersion=${{ steps.version.outputs.package_version }}
+          -p:AssemblyVersion=${{ steps.version.outputs.assembly_version }}
+          -p:FileVersion=${{ steps.version.outputs.assembly_version }}
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuget-package
+          path: |
+            ./artifacts/*.nupkg
+            ./artifacts/*.snupkg
+
+      - name: Authenticate to NuGet.org via trusted publishing
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to NuGet.org
+        run: >-
+          dotnet nuget push ./artifacts/*.nupkg
+          --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Push symbols to NuGet.org
+        run: >-
+          dotnet nuget push ./artifacts/*.snupkg
+          --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PACKAGE_VERSION: ${{ steps.version.outputs.package_version }}
+          NOTES_FILE: ${{ steps.changelog.outputs.notes_file }}
+        run: |
+          set -euo pipefail
+          prerelease_flag=""
+          if [[ "$PACKAGE_VERSION" == *-* ]]; then
+            prerelease_flag="--prerelease"
+          fi
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE" \
+            $prerelease_flag \
+            ./artifacts/*.nupkg \
+            ./artifacts/*.snupkg

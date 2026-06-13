@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/apphost/">
+    <Project Path="Demo.AppHost/Demo.AppHost.csproj" />
+  </Folder>
+  <Folder Name="/services/">
+    <Project Path="Demo.ServiceDefaults/Demo.ServiceDefaults.csproj" />
+    <Project Path="Demo.Bff/Demo.Bff.csproj" />
+    <Project Path="Demo.Api/Demo.Api.csproj" />
+    <Project Path="Demo.ZitadelProvisioner/Demo.ZitadelProvisioner.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="Demo.E2E.Tests/Demo.E2E.Tests.csproj" />
+  </Folder>
+  <Folder Name="/lib/">
+    <Project Path="../src/b17s.Porta.csproj" />
+  </Folder>
+</Solution>

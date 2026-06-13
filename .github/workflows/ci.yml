@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main, pre-release]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore b17s.Porta.slnx
+
+      - name: Build
+        run: >-
+          dotnet build b17s.Porta.slnx
+          --configuration Release
+          --no-restore
+          -p:ContinuousIntegrationBuild=true
+
+      - name: Test
+        run: >-
+          dotnet test tests/b17s.Porta.Tests.csproj
+          --configuration Release
+          --no-build
+          --
+          --report-xunit-trx
+          --report-xunit-trx-filename test-results.trx
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: '**/TestResults/*.trx'

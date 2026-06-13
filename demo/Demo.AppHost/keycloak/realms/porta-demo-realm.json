@@ -1,0 +1,91 @@
+{
+  "realm": "porta-demo",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "clients": [
+    {
+      "clientId": "porta-bff",
+      "name": "b17s.Porta BFF (demo)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "porta-bff-secret",
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "http://127.0.0.1:5101/signin-oidc",
+        "http://127.0.0.1:5101/signout-callback-oidc"
+      ],
+      "webOrigins": [
+        "http://127.0.0.1:5101"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "+",
+        "backchannel.logout.url": "http://127.0.0.1:51101/bff/backchannel-logout",
+        "post.logout.redirect.uris": "+"
+      },
+      "clientAuthenticatorType": "client-secret",
+      "clientId": "porta-bff",
+      "defaultClientScopes": [
+        "openid",
+        "profile",
+        "email",
+        "roles",
+        "web-origins"
+      ],
+      "directAccessGrantsEnabled": true,
+      "enabled": true,
+      "frontchannelLogout": false,
+      "implicitFlowEnabled": false,
+      "name": "b17s.Porta BFF (demo)",
+      "optionalClientScopes": [
+        "offline_access"
+      ],
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "redirectUris": [
+        "http://127.0.0.1:51101/signin-oidc",
+        "http://127.0.0.1:51101/signout-callback-oidc"
+      ],
+      "secret": "porta-bff-secret",
+      "serviceAccountsEnabled": false,
+      "standardFlowEnabled": true,
+      "webOrigins": [
+        "http://127.0.0.1:51101"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "demo@example.com",
+      "firstName": "Demo",
+      "lastName": "User",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo",
+          "temporary": false
+        }
+      ],
+      "requiredActions": [],
+      "realmRoles": [
+        "default-roles-porta-demo"
+      ]
+    }
+  ]
+}

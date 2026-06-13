@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="../Demo.ServiceDefaults/Demo.ServiceDefaults.csproj" />
+    <!-- The whole point of the demo: consume the b17s.Porta library as a real consumer would. -->
+    <ProjectReference Include="../../src/b17s.Porta.csproj" />
+  </ItemGroup>
+
+</Project>

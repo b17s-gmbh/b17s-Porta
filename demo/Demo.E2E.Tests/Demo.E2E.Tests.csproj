@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <!-- xUnit v3 runs as its own process. -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.Testing" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference the AppHost so DistributedApplicationTestingBuilder can boot the whole graph.
+         IsAspireProjectResource=false: we want the AppHost as an entry point, not a child resource. -->
+    <ProjectReference Include="../Demo.AppHost/Demo.AppHost.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+</Project>
