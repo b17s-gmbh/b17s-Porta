@@ -62,15 +62,26 @@ public sealed class WhenPredicateMatcherPolicy : MatcherPolicy, IEndpointSelecto
     }
 
     /// <summary>
-    /// Applies the predicate evaluation to filter the candidate set.
-    /// Endpoints with predicates that return false are marked invalid.
-    /// Endpoints without predicates remain valid (default behavior).
+    /// Applies the predicate evaluation to filter the candidate set, implementing
+    /// "a guarded endpoint wins its route when its predicate is true; an unguarded endpoint on the
+    /// same route is the fallback".
+    /// <para/>
+    /// Endpoints whose predicate returns <c>false</c> are marked invalid. When a guarded endpoint's
+    /// predicate returns <c>true</c>, any <em>unguarded</em> endpoint that shares the same route
+    /// precedence is marked invalid so the guarded endpoint is selected instead of colliding with it
+    /// (which would raise <see cref="Microsoft.AspNetCore.Routing.Matching.AmbiguousMatchException"/>).
+    /// When no guard matches, unguarded endpoints are left untouched and normal precedence selects the
+    /// fallback. Two guarded endpoints on the same route whose predicates are both true remain a
+    /// genuine ambiguity — give overlapping variants mutually-exclusive predicates.
     /// </summary>
     public Task ApplyAsync(HttpContext httpContext, CandidateSet candidates)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
         ArgumentNullException.ThrowIfNull(candidates);
 
+        // Pass 1: evaluate each guarded candidate. A false predicate drops it from selection; a true
+        // one stays valid. Unguarded candidates are left as-is for now.
+        var anyGuardSatisfied = false;
         for (var i = 0; i < candidates.Count; i++)
         {
             if (!candidates.IsValidCandidate(i))
@@ -78,16 +89,47 @@ public sealed class WhenPredicateMatcherPolicy : MatcherPolicy, IEndpointSelecto
                 continue;
             }
 
-            var endpoint = candidates[i].Endpoint;
-            var predicateMetadata = endpoint.Metadata.GetMetadata<WhenPredicateMetadata>();
-
-            if (predicateMetadata is not null)
+            var predicateMetadata = candidates[i].Endpoint.Metadata.GetMetadata<WhenPredicateMetadata>();
+            if (predicateMetadata is null)
             {
-                // Evaluate the predicate - if false, this endpoint won't handle the request
-                var isValid = predicateMetadata.Predicate(httpContext);
-                candidates.SetValidity(i, isValid);
+                continue;
             }
-            // Endpoints without predicate metadata remain valid
+
+            var matched = predicateMetadata.Predicate(httpContext);
+            candidates.SetValidity(i, matched);
+            anyGuardSatisfied |= matched;
+        }
+
+        if (!anyGuardSatisfied)
+        {
+            // No guard matched: any unguarded endpoint on the route is the fallback. Leave the
+            // candidate set untouched so normal precedence selects it.
+            return Task.CompletedTask;
+        }
+
+        // Pass 2: collect the route-precedence buckets (Score) that still hold a satisfied guard. An
+        // unguarded endpoint sharing a bucket with a satisfied guard would tie with it and trigger
+        // AmbiguousMatchException, so the guard must win the bucket.
+        var guardedScores = new HashSet<int>();
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            if (candidates.IsValidCandidate(i)
+                && candidates[i].Endpoint.Metadata.GetMetadata<WhenPredicateMetadata>() is not null)
+            {
+                guardedScores.Add(candidates[i].Score);
+            }
+        }
+
+        // Pass 3: drop unguarded candidates that collide with a satisfied guard at the same
+        // precedence. Unguarded endpoints at other precedences are left for normal routing.
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            if (candidates.IsValidCandidate(i)
+                && candidates[i].Endpoint.Metadata.GetMetadata<WhenPredicateMetadata>() is null
+                && guardedScores.Contains(candidates[i].Score))
+            {
+                candidates.SetValidity(i, false);
+            }
         }
 
         return Task.CompletedTask;

@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 
@@ -249,6 +250,12 @@ public static class PortaServiceExtensions
         // so a consumer's later AddAuthorization(options => options.AddPolicy(...)) and
         // custom IAuthorizationPolicyProvider registrations still compose normally.
         services.AddAuthorization();
+
+        // Startup guard: warn (Critical) if any Porta endpoint requires an authenticated principal
+        // while no authentication scheme is registered to populate HttpContext.User. TryAddEnumerable
+        // so repeated AddPortaCore calls don't run the check more than once.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IHostedService, PortaPrincipalGateStartupCheck>());
 
         return services;
     }

@@ -651,6 +651,10 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
             routeHandler.AllowAnonymous();
         }
 
+        // Record the resolved requirement so the startup check can flag a require-auth endpoint
+        // that has no authentication scheme to populate HttpContext.User.
+        routeHandler.WithMetadata(new PortaPrincipalRequirementMetadata(enforceUserIdentity));
+
         return routeHandler;
     }
 

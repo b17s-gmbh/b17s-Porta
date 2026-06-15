@@ -7,6 +7,7 @@ using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
 using b17s.Porta.Services;
 
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -448,6 +449,10 @@ public static class AuthenticationServiceExtensions
 
         // Authentication providers
         services.AddScoped<SessionAuthProvider>();
+        // ReferenceTokenAuthProvider delegates to the shared authenticator, so it must be
+        // registered alongside the provider on this path too (TryAdd: AddReferenceTokenAuthentication
+        // may also register it).
+        services.TryAddScoped<ReferenceTokenAuthenticator>();
         services.AddScoped<ReferenceTokenAuthProvider>();
 
         // Register SessionAuthProvider as a composable provider. Multiple providers
@@ -650,9 +655,81 @@ public static class AuthenticationServiceExtensions
         // resilience handler on the same named client.
         services.AddReferenceTokenService(configureResilience: configureResilience);
 
+        // Shared introspection/binding/cache core. Used by both the provider (below) and the
+        // PortaReferenceToken scheme; registering it here means either entry point works.
+        services.TryAddScoped<ReferenceTokenAuthenticator>();
+
         services.TryAddScoped<ReferenceTokenAuthProvider>();
         services.AddScoped<IAuthenticationProviderRegistration>(sp =>
             new AuthenticationProviderRegistration(sp.GetRequiredService<ReferenceTokenAuthProvider>()));
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers reference-token (opaque token) authentication as a first-class ASP.NET Core
+    /// authentication scheme (<see cref="PortaReferenceTokenDefaults.AuthenticationScheme"/>).
+    /// Unlike <see cref="AddReferenceTokenAuthentication"/> alone - which only resolves the backend
+    /// <c>AuthContext</c> in-pipeline - this populates <see cref="Microsoft.AspNetCore.Http.HttpContext.User"/>
+    /// via the standard authentication middleware, so <c>RequireAuth()</c> and the per-endpoint
+    /// principal gate work for opaque tokens with no consumer-side auth code.
+    /// </summary>
+    /// <remarks>
+    /// The scheme and the in-pipeline <see cref="ReferenceTokenAuthProvider"/> share one
+    /// <see cref="ReferenceTokenAuthenticator"/>, so an opaque token is introspected at most once per
+    /// request. The scheme registers additively and becomes the default scheme only when no other
+    /// default has been set, so a reference-token-only BFF needs nothing more while a multi-frontend BFF
+    /// keeps its existing default (e.g. the cookie default from <c>AddPortaAuthentication</c>, so browser
+    /// <c>RequireAuthorization</c> still redirects to OIDC login). When composing with cookie/OIDC or JWT
+    /// bearer, register a policy scheme or <c>ForwardDefaultSelector</c> to pick per request, exactly as
+    /// with any multi-scheme setup.
+    /// <para/>
+    /// Idempotent: the scheme is registered only once even if called more than once.
+    /// </remarks>
+    /// <param name="services">The service collection</param>
+    /// <param name="configureOptions">Configures <see cref="ReferenceTokenAuthOptions"/> (authority, audiences, header, cache durations)</param>
+    /// <param name="configureResilience">Optional resilience configuration for the introspection HttpClient</param>
+    /// <returns>The service collection for chaining</returns>
+    public static IServiceCollection AddPortaReferenceTokenScheme(
+        this IServiceCollection services,
+        Action<ReferenceTokenAuthOptions> configureOptions,
+        Action<HttpStandardResilienceOptions>? configureResilience = null)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configureOptions);
+
+        // Reuse the existing wiring: options binding/validation, introspection HttpClient + service,
+        // the shared authenticator, and the in-pipeline provider (so outbound AuthContext is
+        // populated identically to the provider-only path).
+        services.AddReferenceTokenAuthentication(configureOptions, configureResilience);
+
+        // Idempotency guard: a second AddScheme() for the same name throws at the first authenticate.
+        if (services.Any(d => d.ServiceType == typeof(PortaReferenceTokenSchemeMarker)))
+        {
+            return services;
+        }
+
+        services.AddSingleton<PortaReferenceTokenSchemeMarker>();
+
+        // Register the scheme additively (the AddScheme call forces no default), the same way
+        // AddPortaJwtAuthentication registers the Bearer scheme, so it composes with cookie/OIDC and
+        // JWT bearer in a multi-frontend BFF. NOTE: unlike the JWT path - which never sets a default
+        // and relies on ASP.NET's single-scheme fallback - the PostConfigure below additionally
+        // claims the default scheme when nothing else has, so a reference-token-only BFF needs no
+        // ForwardDefaultSelector. The trade-off: in a JWT-then-reference-token composition where
+        // neither path set a default, reference-token wins it - see the note on the PostConfigure.
+        services.AddAuthentication()
+            .AddScheme<AuthenticationSchemeOptions, PortaReferenceTokenHandler>(
+                PortaReferenceTokenDefaults.AuthenticationScheme, _ => { });
+
+        // Claim the default scheme only if nothing else already has. A reference-token-only BFF then
+        // works with no further config; a multi-frontend BFF keeps its existing default (e.g. the
+        // cookie default set by AddPortaAuthentication, so browser RequireAuthorization still redirects
+        // to OIDC login) and selects per request via a policy scheme / ForwardDefaultSelector. Runs as
+        // PostConfigure so it observes whatever any AddAuthentication(...) / AddPorta* call configured,
+        // regardless of registration order.
+        services.PostConfigure<AuthenticationOptions>(options =>
+            options.DefaultScheme ??= PortaReferenceTokenDefaults.AuthenticationScheme);
 
         return services;
     }
@@ -831,4 +908,12 @@ public static class AuthenticationServiceExtensions
     /// (options configuration still composes).
     /// </summary>
     private sealed class PortaJwtAuthenticationMarker;
+
+    /// <summary>
+    /// Marker registration recording that
+    /// <see cref="AddPortaReferenceTokenScheme(IServiceCollection, Action{ReferenceTokenAuthOptions}, Action{HttpStandardResilienceOptions})"/>
+    /// has already registered the authentication scheme, making repeated calls no-ops for scheme
+    /// registration (options configuration still composes).
+    /// </summary>
+    private sealed class PortaReferenceTokenSchemeMarker;
 }

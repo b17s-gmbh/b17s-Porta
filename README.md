@@ -136,6 +136,7 @@ app.MapTransformer<ProductsTransformer, ProductsResponse>()
 | [Telemetry](docs/telemetry.md) | OpenTelemetry traces and metrics |
 | [HA Deployment](docs/ha-deployment.md) | Running multiple replicas behind a load balancer without sticky sessions |
 | [API Gateway Use](docs/api-gateway.md) | When to use this library as a gateway, and when to pick something else |
+| [Advanced](docs/advanced.md) | API versioning, MapGroup, OpenAPI metadata, and composing framework features |
 
 ## Try it (runnable demo)
 

@@ -117,7 +117,7 @@ public class ReferenceTokenAuthProviderTests
 
     private static bool InvokeAudienceContainsAny(string audClaim, IList<string> expected)
     {
-        var method = typeof(ReferenceTokenAuthProvider).GetMethod(
+        var method = typeof(ReferenceTokenAuthenticator).GetMethod(
             "AudienceContainsAny",
             BindingFlags.NonPublic | BindingFlags.Static)!;
         return (bool)method.Invoke(null, [audClaim, expected, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance])!;
@@ -539,11 +539,7 @@ public sealed class ReferenceTokenAuthProviderFlowTests
             OptionsFor(validateAudience: true, validateIssuer: false));
         monitor.Current.ValidAudiences = ["old-aud"];
 
-        var sut = new ReferenceTokenAuthProvider(
-            introspector,
-            new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())),
-            NullLogger<ReferenceTokenAuthProvider>.Instance,
-            monitor);
+        var sut = new ReferenceTokenAuthProvider(BuildAuthenticator(introspector, monitor));
 
         var rejected = await sut.GetAuthContextAsync(WithAuthHeader(Bearer), TestContext.Current.CancellationToken);
         Assert.False(rejected.IsAuthenticated);
@@ -567,11 +563,7 @@ public sealed class ReferenceTokenAuthProviderFlowTests
             OptionsFor(validateAudience: true, validateIssuer: false));
         monitor.Current.ValidAudiences = ["old-aud"];
 
-        var sut = new ReferenceTokenAuthProvider(
-            introspector,
-            new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())),
-            NullLogger<ReferenceTokenAuthProvider>.Instance,
-            monitor);
+        var sut = new ReferenceTokenAuthProvider(BuildAuthenticator(introspector, monitor));
 
         // First call: accepted under the old policy and written to the positive cache.
         var accepted = await sut.GetAuthContextAsync(WithAuthHeader(Bearer), TestContext.Current.CancellationToken);
@@ -597,11 +589,22 @@ public sealed class ReferenceTokenAuthProviderFlowTests
         ReferenceTokenAuthOptions options,
         IDistributedCache? cache = null,
         TimeProvider? timeProvider = null) =>
+        new(BuildAuthenticator(
+            introspector,
+            new StaticOptionsMonitor<ReferenceTokenAuthOptions>(options),
+            cache,
+            timeProvider));
+
+    private static ReferenceTokenAuthenticator BuildAuthenticator(
+        IReferenceTokenService introspector,
+        IOptionsMonitor<ReferenceTokenAuthOptions> monitor,
+        IDistributedCache? cache = null,
+        TimeProvider? timeProvider = null) =>
         new(
             introspector,
             cache ?? new MemoryDistributedCache(Options.Create(new MemoryDistributedCacheOptions())),
-            NullLogger<ReferenceTokenAuthProvider>.Instance,
-            new StaticOptionsMonitor<ReferenceTokenAuthOptions>(options),
+            NullLogger<ReferenceTokenAuthenticator>.Instance,
+            monitor,
             timeProvider);
 
     private static ReferenceTokenAuthOptions OptionsFor(
