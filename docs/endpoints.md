@@ -146,7 +146,11 @@ app.MapTransformer<ProductsTransformer, ProductsResponse>()
 **How it works:**
 - The predicate runs during ASP.NET Core's endpoint selection phase (before authorization)
 - If the predicate returns `false`, the endpoint is skipped and other matching routes are tried
-- Endpoints without `.When()` always match (useful as fallbacks)
+- A guarded endpoint wins its route when its predicate is `true`; an unguarded endpoint on the same
+  route is the fallback that serves everything no guard claims
+- A request is an ambiguous match only when two endpoints on the same route+method stay valid at the
+  same precedence with no guard to break the tie — i.e. two *unguarded* endpoints, or two `.When()`s
+  that are true at once. A single unguarded fallback alongside guarded variants is fine
 - Keep predicates simple for performance - they run on every matching request
 
 ## Multi-Backend Endpoints

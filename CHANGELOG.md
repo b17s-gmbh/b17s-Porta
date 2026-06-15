@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-rc.3] - 2026-06-14
+### Updated
+- Nuget packages up
+### Added
+- advanced.md and authentication.md docs: API versioning, endpoint grouping, and the "two auth layers" (identity gate vs. provider) guidance
+- API versioning and auth composition tests
+- `AddPortaReferenceTokenScheme`: registers opaque/reference tokens as ASP.NET auth scheme that populates `HttpContext.User`, so `RequireAuth()` and the principal gate work with no consumer-side auth code (shares one introspection/cache core with `ReferenceTokenAuthProvider`)
+- Startup check that logs `Critical` when an endpoint requires an authenticated principal but no auth scheme is registered to populate `HttpContext.User`
+### Fixed
+- Predicate ambiguity handling for `.When()` endpoints sharing a route
+
 ## [0.1.0-rc.2] - 2026-06-14
 ### Added
 - BFF Transformer (TransformerBase, PassThroughTransformer, AuthenticatedTransformer, MultiBackendTransformer, AggregatingTransformer)

@@ -11,8 +11,45 @@ The framework uses `IAuthenticationProvider` to expose user identity to transfor
 | Provider | Use Case | Token Refresh |
 |----------|----------|---------------|
 | `SessionAuthProvider` | Reads the cookie auth ticket populated by the framework's OIDC handler. Default when you call `AddPortaAuthentication`. | Yes (via `IAccessTokenRefreshService`) |
-| `ReferenceTokenAuthProvider` | Reference token validation via introspection (recommended for API-style callers) | No |
+| `ReferenceTokenAuthProvider` | Reference token validation via introspection, in-pipeline only (`AddReferenceTokenAuthentication`) — resolves `AuthContext` but does **not** set `HttpContext.User`. Recommended for API-style callers. | No |
 | `JwtBearerAuthProvider` | Inbound JWT validation via OIDC discovery / JWKS (opt-in fallback) | No |
+
+For opaque tokens, prefer registering them as a **scheme** rather than provider-only:
+
+| Scheme | Use Case | Token Refresh |
+|--------|----------|---------------|
+| `PortaReferenceToken` | The same introspection + binding + cache as `ReferenceTokenAuthProvider`, but registered as an ASP.NET auth scheme (`AddPortaReferenceTokenScheme`). It **sets `HttpContext.User`**, so `RequireAuth()` and the principal gate work for opaque tokens with no extra code. See [Two auth layers](#two-auth-layers-the-identity-gate-vs-the-provider). | No |
+
+```csharp
+// Program.cs
+builder.Services.AddPortaCore();
+
+// Introspection results are cached, so an IDistributedCache is required
+// (Redis/Valkey in production; in-memory is fine for local dev).
+builder.Services.AddDistributedMemoryCache();
+
+builder.Services.AddPortaReferenceTokenScheme(options =>
+{
+    options.Authority = "https://idp.example.com";   // discovers the RFC 7662 introspection endpoint
+    options.ClientId = "my-bff";                      // credentials used to call /introspect
+    options.ClientSecret = builder.Configuration["ReferenceToken:ClientSecret"]!;
+    options.ValidAudiences = ["api://my-bff"];        // reject tokens minted for another relying party
+});
+
+var app = builder.Build();
+
+app.UseAuthentication();   // the PortaReferenceToken scheme introspects the token and sets HttpContext.User
+app.UseAuthorization();
+
+// The opaque token now gates endpoints like any other principal - no per-endpoint auth code.
+// RequireAuthorizationByDefault is true, so this 401s without a valid, introspectable token:
+app.MapPassThrough<ProductsResponse>()
+    .FromGet("/api/products")
+    .ToGet("https://products.internal/products")
+    .Build();
+```
+
+`AddPortaReferenceTokenScheme` registers additively and becomes the default scheme **only when no other default is set**, so a reference-token-only BFF needs nothing more. In a multi-frontend BFF it does **not** clobber an existing default (e.g. the cookie default from `AddPortaAuthentication`, so browser `RequireAuthorization` still redirects to OIDC login) — register the other schemes too and add a policy scheme (or `ForwardDefaultSelector`) to pick per request, standard ASP.NET multi-scheme.
 
 ### SessionAuthProvider
 
@@ -201,6 +238,62 @@ builder.Services.AddPortaAuthProvider<ApiKeyAuthProvider>();
 builder.Services.AddPortaAuthProvider<ApiKeyAuthProvider>(sp =>
     new ApiKeyAuthProvider(sp.GetRequiredService<IApiKeyValidator>()));
 ```
+
+> **A custom provider does not satisfy `RequireAuthorization` by itself — read the next section before shipping it.** Left at the default, an endpoint behind such a provider returns `401` *before your provider ever runs*.
+
+### Two auth layers: the identity gate vs. the provider
+
+Porta enforces authentication at **two** distinct points, and conflating them is the most common BFF footgun:
+
+1. **The ASP.NET identity gate — `HttpContext.User`.** Every Porta endpoint stamps `RequireAuthorization()` at `.Build()` unless told otherwise (`RequireAuthorizationByDefault` defaults to `true`; override per endpoint with `.RequireAuth("policy")` / `.AllowAnonymous()`). That requirement is enforced by ASP.NET's authorization middleware **before** the endpoint runs, and re-checked inside Porta's handler as defense-in-depth. It passes only if `HttpContext.User.Identity.IsAuthenticated` is `true` — which is set exclusively by a registered **ASP.NET authentication scheme**.
+2. **The Porta provider — `AuthContext`.** Your `IAuthenticationProvider.GetAuthContextAsync` runs **inside** the endpoint handler, *after* the identity gate, and resolves the access token + claims used for **backend** calls. It does **not** populate `HttpContext.User`.
+
+So whether the gate and the provider line up depends on how your auth is registered:
+
+| Auth mechanism | Registers an ASP.NET scheme? | Sets `HttpContext.User`? | Default `RequireAuthorization` works? |
+| --- | --- | --- | --- |
+| `AddPortaAuthentication` (cookie + OIDC) | ✅ | ✅ | ✅ — no extra action |
+| `AddPortaJwtAuthentication` (JWT bearer) | ✅ | ✅ | ✅ — no extra action |
+| **`AddPortaReferenceTokenScheme`** (opaque token) | ✅ | ✅ | ✅ — no extra action |
+| `AddReferenceTokenAuthentication` (provider only) | ❌ | ❌ | ❌ — gate 401s first |
+| Custom `IAuthenticationProvider` (API key, HMAC, …) | ❌ | ❌ | ❌ — gate 401s first |
+
+For the two ❌ rows the provider authenticates **in-pipeline only**, so the default identity gate short-circuits with `401` before the provider is consulted — even when the request carries a perfectly valid token. (Porta logs a `Critical` startup warning when an endpoint requires a principal but no scheme is registered, so this doesn't stay silent.) You have two ways to fix it:
+
+**Option A — drop the gate, authenticate in-pipeline.** Mark the endpoints `.AllowAnonymous()` (or set `RequireAuthorizationByDefault = false`) so the request reaches the handler and your provider runs and populates `AuthContext` for the backend call:
+
+```csharp
+app.MapPassThrough<DataResponse>()
+    .FromGet("/api/data")
+    .ToGet("https://api.internal/data")
+    .AllowAnonymous()            // skip the ASP.NET identity gate; the provider runs in-pipeline
+    .Build();
+```
+
+`.AllowAnonymous()` here means "no ASP.NET principal required", **not** "no auth" — the provider still resolves credentials for the backend. If you also need to *reject* anonymous callers, enforce it in-pipeline: a transformer whose `RequiresAuthentication` returns `true` 401s when `context.UserId` (i.e. the provider's `AuthContext`) is empty. A zero-code `MapPassThrough` does **not** do this, so don't rely on `.AllowAnonymous()` alone to protect a passthrough.
+
+**Option B — register a real scheme (recommended when you want `RequireAuthorization` to work).** A scheme populates `HttpContext.User`, so the identity gate passes normally, your `IAuthenticationProvider` reads the already-validated principal/token for backend forwarding, and `.RequireAuth("policy")`, fallback policies, and group conventions all behave as a vanilla ASP.NET app expects.
+
+For **opaque / reference tokens**, this is built in — swap `AddReferenceTokenAuthentication` for `AddPortaReferenceTokenScheme`:
+
+```csharp
+builder.Services.AddPortaReferenceTokenScheme(options =>
+{
+    options.Authority = "https://idp.example.com";
+    options.ValidAudiences = ["api://my-bff"];
+});
+
+// ...then nothing else changes — the opaque token gates endpoints like any other principal:
+app.MapRawForward()
+    .FromGet("/api/{**catch-all}")
+    .ToGet("https://logic.internal/api/{**catch-all}")
+    .RequireAuth()          // works: the scheme introspected the token and set HttpContext.User
+    .Build();
+```
+
+The `PortaReferenceToken` scheme runs the same introspection, audience/issuer binding, and distributed (positive + negative) cache as the provider — the token is introspected at most once per request — and returns a principal carrying the introspection claims. It composes with cookie/OIDC and JWT bearer via standard multi-scheme selection (a policy scheme or `ForwardDefaultSelector`); the only thing that changes between credential types is the `AddPorta…` registration line, so the BFF's forwarding code is identical either way. For credential types Porta doesn't ship (HMAC, mTLS-derived identity, …), implement a standard ASP.NET Core `AuthenticationHandler` the same way.
+
+> **Don't put authorization on a `MapGroup`** to cover Porta endpoints — Porta's per-endpoint stamp wins, and an endpoint that resolves to anonymous emits `AllowAnonymous()` that overrides the group requirement. See [Advanced Topics → Grouping endpoints](advanced.md#grouping-endpoints-with-mapgroup).
 
 ### Combining authentication providers
 
