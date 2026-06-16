@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 
 using b17s.Porta.Auth.Discovery;
+using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
 
 using Microsoft.Extensions.Logging.Abstractions;
@@ -328,6 +329,48 @@ public sealed class DiscoveryServiceTests
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
+    }
+
+    [Fact]
+    public async Task GetConfigurationAsync_NonHttpsAuthority_AllowedWhenReferenceTokenRequireHttpsMetadataFalse()
+    {
+        // Regression: a reference-token-only BFF configures ReferenceTokenAuthOptions, not the
+        // session-auth type. With the session config left at its RequireHttpsMetadata=true default,
+        // flipping ReferenceTokenAuthOptions.RequireHttpsMetadata=false must still allow plain-http
+        // discovery - the shared retriever ANDs the two flags, so either path can opt out.
+        var handler = new RecordingHandler(_ => DiscoveryDocument(issuer: "http://idp.test"));
+        var factory = new SingleClientFactory(new HttpClient(handler));
+        var sessionMonitor = new StaticOptionsMonitor<SessionAuthenticationConfiguration>(
+            new SessionAuthenticationConfiguration { RequireHttpsMetadata = true });
+        var refMonitor = new StaticOptionsMonitor<ReferenceTokenAuthOptions>(
+            new ReferenceTokenAuthOptions { RequireHttpsMetadata = false });
+        var sut = new DiscoveryService(factory, sessionMonitor, NullLogger<DiscoveryService>.Instance, null, refMonitor);
+
+        var result = await sut.GetConfigurationAsync("http://idp.test", TestContext.Current.CancellationToken);
+
+        Assert.NotNull(result);
+        Assert.Contains(handler.RequestUris, u => u == "http://idp.test/.well-known/openid-configuration");
+    }
+
+    [Fact]
+    public async Task GetConfigurationAsync_NonHttpsAuthority_RejectedWhenBothPathsRequireHttps()
+    {
+        // Secure default holds: with the reference-token monitor present and BOTH flags at their
+        // true default, plain-http discovery stays blocked. (The shared retriever allows http only
+        // when at least one path opts out - an explicit local-dev switch - so leaving both untouched
+        // keeps HTTPS enforced.)
+        var handler = new RecordingHandler(_ => DiscoveryDocument());
+        var factory = new SingleClientFactory(new HttpClient(handler));
+        var sessionMonitor = new StaticOptionsMonitor<SessionAuthenticationConfiguration>(
+            new SessionAuthenticationConfiguration { RequireHttpsMetadata = true });
+        var refMonitor = new StaticOptionsMonitor<ReferenceTokenAuthOptions>(
+            new ReferenceTokenAuthOptions { RequireHttpsMetadata = true });
+        var sut = new DiscoveryService(factory, sessionMonitor, NullLogger<DiscoveryService>.Instance, null, refMonitor);
+
+        var result = await sut.GetConfigurationAsync("http://idp.test", TestContext.Current.CancellationToken);
+
+        Assert.Null(result);
+        Assert.Equal(0, handler.Calls);
     }
 
     private static DiscoveryService Build(

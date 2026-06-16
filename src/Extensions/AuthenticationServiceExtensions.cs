@@ -461,8 +461,10 @@ public static class AuthenticationServiceExtensions
         services.AddScoped<IAuthenticationProviderRegistration>(sp =>
             new AuthenticationProviderRegistration(sp.GetRequiredService<SessionAuthProvider>()));
 
-        // Discovery service for OIDC configuration
-        services.AddSingleton<IDiscoveryService, DiscoveryService>();
+        // Discovery service for OIDC configuration. TryAdd so a multi-frontend BFF that also calls
+        // AddReferenceTokenAuthentication (which registers the same service) ends up with a single
+        // descriptor regardless of call order.
+        services.TryAddSingleton<IDiscoveryService, DiscoveryService>();
 
         return services;
     }
@@ -654,6 +656,13 @@ public static class AuthenticationServiceExtensions
         // prevents a consumer combining both entry points from nesting a second
         // resilience handler on the same named client.
         services.AddReferenceTokenService(configureResilience: configureResilience);
+
+        // ReferenceTokenService discovers the introspection endpoint via IDiscoveryService, which the
+        // low-level AddReferenceTokenService building block intentionally leaves to its consumer. A
+        // reference-token-only BFF (provider or scheme) has no other path that registers it, so without
+        // this the singleton introspection service can't be constructed and the BFF fails DI validation
+        // at startup. TryAdd so it composes with the session/OIDC path that also registers it.
+        services.TryAddSingleton<IDiscoveryService, DiscoveryService>();
 
         // Shared introspection/binding/cache core. Used by both the provider (below) and the
         // PortaReferenceToken scheme; registering it here means either entry point works.

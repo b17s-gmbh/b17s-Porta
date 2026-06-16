@@ -1,5 +1,6 @@
 using System.Text.Encodings.Web;
 
+using b17s.Porta.Auth.Discovery;
 using b17s.Porta.Auth.Providers;
 using b17s.Porta.Extensions;
 using b17s.Porta.Services;
@@ -55,6 +56,29 @@ public sealed class PortaReferenceTokenSchemeCompositionTests
         var schemeProvider = provider.GetRequiredService<IAuthenticationSchemeProvider>();
         Assert.NotNull(await schemeProvider.GetSchemeAsync(PortaReferenceTokenDefaults.AuthenticationScheme));
         Assert.NotNull(await schemeProvider.GetSchemeAsync("Cookies"));
+    }
+
+    [Fact]
+    public void Standalone_ReferenceTokenScheme_RegistersDiscoveryService_SoIntrospectionServiceResolves()
+    {
+        // Regression: ReferenceTokenService takes IDiscoveryService in its constructor, but only the
+        // session/OIDC path used to register that service. A reference-token-only BFF therefore had an
+        // unsatisfiable singleton and failed DI validation at startup. The scheme (which promises "no
+        // consumer-side auth code") must register discovery itself.
+        // NOTE: unlike the other tests here, this one does NOT register a FakeIntrospector - that fake is
+        // exactly what hid this gap, because it shadowed the real ReferenceTokenService graph.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDistributedMemoryCache();
+
+        services.AddPortaReferenceTokenScheme(o => o.Authority = "https://idp.test");
+
+        var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true });
+
+        // The real introspection service - which depends on IDiscoveryService - constructs cleanly.
+        var introspector = provider.GetRequiredService<IReferenceTokenService>();
+        Assert.IsType<ReferenceTokenService>(introspector);
+        Assert.NotNull(provider.GetRequiredService<IDiscoveryService>());
     }
 
     private static ServiceCollection NewServices()

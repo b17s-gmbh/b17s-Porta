@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1-rc.4] - 2026-06-16
+### Fixed
+- `AddPortaReferenceTokenScheme` / `AddReferenceTokenAuthentication` now register `IDiscoveryService`, which `ReferenceTokenService` depends on for introspection-endpoint discovery. A reference-token-only BFF previously had an unsatisfiable singleton and failed DI validation at startup.
+- Reference-token-only BFFs can now talk to a non-HTTPS IdP via the new `ReferenceTokenAuthOptions.RequireHttpsMetadata` (default `true`) instead of reaching into `SessionAuthenticationConfiguration`. Discovery requires HTTPS only while both the session and reference-token flags ask for it; either path opting out allows plain-http discovery.
+
 ## [0.2.0-rc.3] - 2026-06-14
 ### Updated
 - Nuget packages up

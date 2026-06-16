@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 
+using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
 using b17s.Porta.Extensions;
 
@@ -18,7 +19,8 @@ public sealed class DiscoveryService(
     IHttpClientFactory httpClientFactory,
     IOptionsMonitor<SessionAuthenticationConfiguration> configMonitor,
     ILogger<DiscoveryService> logger,
-    TimeProvider? timeProvider = null) : IDiscoveryService
+    TimeProvider? timeProvider = null,
+    IOptionsMonitor<ReferenceTokenAuthOptions>? referenceTokenOptionsMonitor = null) : IDiscoveryService
 {
     /// <summary>
     /// Minimum time between forced refreshes per authority. The trigger (a token with an unknown
@@ -30,7 +32,7 @@ public sealed class DiscoveryService(
     private readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _managers = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastForcedRefresh = new();
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
-    private readonly FactoryDocumentRetriever _documentRetriever = new(httpClientFactory, configMonitor);
+    private readonly FactoryDocumentRetriever _documentRetriever = new(httpClientFactory, configMonitor, referenceTokenOptionsMonitor);
 
     /// <inheritdoc/>
     public async Task<OpenIdConnectConfiguration?> GetConfigurationAsync(string authority, CancellationToken cancellationToken = default)
@@ -131,19 +133,34 @@ public sealed class DiscoveryService(
     /// The <see cref="ConfigurationManager{T}"/> instances live for the process lifetime, so
     /// pinning the client created at manager construction would defeat the factory's handler
     /// rotation (DNS refresh, connection recycling) for that authority forever. Reading the
-    /// options monitor per fetch likewise lets a <c>RequireHttpsMetadata</c> change take
+    /// options monitors per fetch likewise lets a <c>RequireHttpsMetadata</c> change take
     /// effect without a restart.
     /// </summary>
     internal sealed class FactoryDocumentRetriever(
         IHttpClientFactory httpClientFactory,
-        IOptionsMonitor<SessionAuthenticationConfiguration> configMonitor) : IDocumentRetriever
+        IOptionsMonitor<SessionAuthenticationConfiguration> configMonitor,
+        IOptionsMonitor<ReferenceTokenAuthOptions>? referenceTokenOptionsMonitor = null) : IDocumentRetriever
     {
         public Task<string> GetDocumentAsync(string address, CancellationToken cancel)
         {
+            // Require HTTPS only while BOTH the session-auth config and the reference-token options
+            // ask for it; if EITHER path opts out, plain-http discovery is allowed for every fetch.
+            // Both flags default to true, which is what makes this work for single-frontend BFFs: a
+            // reference-token-only BFF flips ReferenceTokenAuthOptions.RequireHttpsMetadata=false
+            // without touching the session-auth type (whose untouched default stays true), and a
+            // session/OIDC-only BFF is unchanged (the ref-token monitor stays at its true default, or
+            // is absent in direct construction). The trade-off is the rare mixed multi-frontend case
+            // where one path opts out and the other does not: this shared fetcher can't tell which
+            // authority a given fetch belongs to, so the opt-out downgrades discovery for both. That's
+            // acceptable because RequireHttpsMetadata=false is a local-dev switch - in production every
+            // path keeps the secure default and HTTPS stays enforced.
+            var requireHttps = configMonitor.CurrentValue.RequireHttpsMetadata
+                && (referenceTokenOptionsMonitor?.CurrentValue.RequireHttpsMetadata ?? true);
+
             var retriever = new HttpDocumentRetriever(
                 httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName))
             {
-                RequireHttps = configMonitor.CurrentValue.RequireHttpsMetadata
+                RequireHttps = requireHttps
             };
             return retriever.GetDocumentAsync(address, cancel);
         }

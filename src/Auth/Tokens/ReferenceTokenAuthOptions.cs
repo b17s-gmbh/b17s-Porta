@@ -23,6 +23,21 @@ public sealed class ReferenceTokenAuthOptions
     public string Authority { get; set; } = string.Empty;
 
     /// <summary>
+    /// Whether to require HTTPS for the OIDC metadata endpoint used to discover the introspection
+    /// endpoint (default: true). Set to false only for local development against a non-HTTPS IdP.
+    /// <para>
+    /// A reference-token-only BFF controls plain-http discovery through this option without having
+    /// to reach into the session-auth configuration type. The shared discovery layer requires HTTPS
+    /// only while <em>both</em> this option and
+    /// <see cref="b17s.Porta.Configuration.SessionAuthenticationConfiguration.RequireHttpsMetadata"/>
+    /// ask for it; if either opts out, plain http is allowed for all discovery fetches. Because both
+    /// default to true, each single-frontend BFF is driven by whichever path it configured (the other
+    /// stays at the secure default), while in production - where no path opts out - HTTPS stays enforced.
+    /// </para>
+    /// </summary>
+    public bool RequireHttpsMetadata { get; set; } = true;
+
+    /// <summary>
     /// Client ID for introspection authentication
     /// </summary>
     public string ClientId { get; set; } = string.Empty;
