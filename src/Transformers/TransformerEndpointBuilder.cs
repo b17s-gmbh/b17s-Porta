@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -312,6 +313,7 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
         ValidateAuthorizationRequirements();
         ValidateTrustedHostsForUserTokenForwarding();
         ValidateTokenExchangeAudienceResolvable();
+        ValidateCacheableLegsAtStartup();
 
         // Capture values for closure
         var namedBackends = _namedBackends;
@@ -640,6 +642,70 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
             }
         }
     }
+
+    // Cross-check every cacheable leg of an AggregatingTransformer at boot, so a user-varying leg
+    // cached without a per-user key (or a non-cacheable verb, or a missing HybridCache registration)
+    // fails at startup instead of on the first request. The same checks run again at request time -
+    // this is a fail-fast front-stop, not a replacement. Only named-backend aggregating transformers
+    // have cacheable legs (WithCache is declared on a named backend leg), so other endpoints are a no-op.
+    private void ValidateCacheableLegsAtStartup()
+    {
+        if (_namedBackends.Count == 0
+            || !typeof(ICacheableLegIntrospection).IsAssignableFrom(typeof(TTransformer)))
+        {
+            return;
+        }
+
+        // Configure() is request-independent static configuration, so we can read the legs from a
+        // throwaway instance. If the transformer can't be constructed outside a request scope (e.g. it
+        // depends on a scoped service) or Configure() itself can't run here, fall back to the
+        // request-time guard rather than failing an otherwise-valid startup.
+        IReadOnlyList<BackendCallConfig> configs;
+        object? instance = null;
+        try
+        {
+            instance = ActivatorUtilities.CreateInstance(_services, typeof(TTransformer));
+            // The returned configs are independent data, so the throwaway instance is only needed for
+            // this read; dispose it here rather than leaking one per cacheable endpoint at boot.
+            configs = ((ICacheableLegIntrospection)instance).GetConfiguredBackends();
+        }
+        catch (Exception ex)
+        {
+            _services.GetService<ILoggerFactory>()
+                ?.CreateLogger(typeof(TTransformer))
+                .CacheStartupValidationSkipped(typeof(TTransformer).Name, ex.Message);
+            return;
+        }
+        finally
+        {
+            (instance as IDisposable)?.Dispose();
+        }
+
+        // Validation throws propagate (that is the point - fail the boot). Done outside the catch
+        // above so a genuine misconfiguration is never swallowed as an "instance couldn't be built".
+        var hasCacheableLeg = false;
+        foreach (var config in configs)
+        {
+            if (config.Cache is null)
+            {
+                continue;
+            }
+
+            hasCacheableLeg = true;
+            if (_namedBackends.TryGet(config.Name, out var endpoint) && endpoint is not null)
+            {
+                BackendCacheValidation.ValidateLegConfiguration(config, endpoint, typeof(TTransformer).Name);
+            }
+        }
+
+        if (hasCacheableLeg && _services.GetService<HybridCache>() is null)
+        {
+            throw new InvalidOperationException(
+                $"Transformer '{typeof(TTransformer).Name}' has a backend leg that declares .WithCache(...) " +
+                "(or .WithGraphQLCache(...)), but no HybridCache is registered. Call services.AddHybridCache() " +
+                "during startup (optionally with a distributed L2 cache such as Redis for HA). See docs/caching.md.");
+        }
+    }
 }
 
 /// <summary>
@@ -737,4 +803,10 @@ internal static partial class TransformerEndpointLogging
     [LoggerMessage(EventId = 14042, Level = LogLevel.Warning,
         Message = "Transformer {TransformerName} request body deserialization failed")]
     public static partial void TransformerRequestDeserializationError(this ILogger logger, string transformerName, Exception ex);
+
+    [LoggerMessage(EventId = 14043, Level = LogLevel.Debug,
+        Message = "Startup cache validation skipped for transformer {TransformerName}: it could not be " +
+                  "instantiated/configured outside a request scope ({Reason}). Per-leg cache safety is " +
+                  "still enforced at request time.")]
+    public static partial void CacheStartupValidationSkipped(this ILogger logger, string transformerName, string reason);
 }

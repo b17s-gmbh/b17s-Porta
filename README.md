@@ -132,6 +132,7 @@ app.MapTransformer<ProductsTransformer, ProductsResponse>()
 | [Authentication](docs/authentication.md) | User auth providers and backend auth handlers |
 | [OIDC Endpoints](docs/oidc.md) | Login, logout, back-channel logout, and session admin |
 | [Raw Forwarding](docs/raw-forwarding.md) | Binary content, file proxying, and streaming |
+| [Caching](docs/caching.md) | Output caching endpoints, distributed (HA) cache, and per-leg aggregation caching |
 | [GraphQL](docs/graphql.md) | Calling GraphQL backends from REST endpoints |
 | [Telemetry](docs/telemetry.md) | OpenTelemetry traces and metrics |
 | [HA Deployment](docs/ha-deployment.md) | Running multiple replicas behind a load balancer without sticky sessions |

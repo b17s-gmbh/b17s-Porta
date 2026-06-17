@@ -88,13 +88,14 @@ public static class TestFixtures
         Dictionary<string, StringValues>? requestHeaders = null,
         Dictionary<string, object>? properties = null,
         ILogger? logger = null,
+        IServiceProvider? serviceProvider = null,
         CancellationToken cancellationToken = default)
     {
         var context = new TransformerContext
         {
             AuthContext = authContext ?? CreateAuthContext(),
             BackendCaller = backendCaller ?? new MockBackendCaller(),
-            HttpContext = httpContext ?? CreateHttpContext(),
+            HttpContext = httpContext ?? CreateHttpContext(serviceProvider: serviceProvider),
             RouteValues = routeValues ?? new Dictionary<string, object?>(),
             QueryParameters = queryParameters ?? new Dictionary<string, StringValues>(),
             RequestHeaders = requestHeaders ?? new Dictionary<string, StringValues>(),
@@ -146,6 +147,7 @@ public static class TestFixtures
         Dictionary<string, object?>? routeValues = null,
         Dictionary<string, StringValues>? queryParameters = null,
         ILogger? logger = null,
+        IServiceProvider? serviceProvider = null,
         CancellationToken cancellationToken = default)
     {
         var properties = new Dictionary<string, object>
@@ -161,6 +163,7 @@ public static class TestFixtures
             queryParameters: queryParameters,
             properties: properties,
             logger: logger,
+            serviceProvider: serviceProvider,
             cancellationToken: cancellationToken);
     }
 
@@ -171,11 +174,19 @@ public static class TestFixtures
         string method = "GET",
         string path = "/test",
         Dictionary<string, string>? headers = null,
-        Dictionary<string, string>? queryString = null)
+        Dictionary<string, string>? queryString = null,
+        IServiceProvider? serviceProvider = null)
     {
         var context = new DefaultHttpContext();
         context.Request.Method = method;
         context.Request.Path = path;
+
+        if (serviceProvider != null)
+        {
+            // Lets transformers resolve request-time services (e.g. HybridCache) via
+            // TransformerContext.GetService<T>()/GetRequiredService<T>().
+            context.RequestServices = serviceProvider;
+        }
 
         if (headers != null)
         {

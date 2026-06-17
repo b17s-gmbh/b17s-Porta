@@ -211,7 +211,9 @@ app.MapPassThrough<PublicConfig>()
 > **Caching caveat:** only cache endpoints whose response does not depend on the user. Anything that
 > forwards the user's token (`BackendAuthPolicies.BearerToken`, token exchange) or returns
 > per-identity data must not be output-cached at the BFF, or one user can be served another's
-> response. Key the cache by the varying dimension, or don't cache it.
+> response. Key the cache by the varying dimension, or don't cache it. See [Caching](caching.md) for
+> the full guide — distributed (HA) cache stores, tag-based invalidation, and caching one leg of an
+> aggregation.
 
 ---
 

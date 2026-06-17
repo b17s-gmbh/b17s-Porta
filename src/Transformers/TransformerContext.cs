@@ -1,6 +1,7 @@
 using b17s.Porta.Auth.Providers;
 
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Primitives;
 
@@ -91,4 +92,24 @@ public sealed class TransformerContext
     /// </summary>
     public IReadOnlyList<string> GetClaims(string name) =>
         AuthContext.Claims.TryGetValue(name, out var values) ? values : [];
+
+    /// <summary>
+    /// Resolves a service from the request's <see cref="HttpContext.RequestServices"/> container,
+    /// throwing if it is not registered. Use this to reach framework services a transformer needs at
+    /// request time (e.g. <c>HybridCache</c>) without threading them through a constructor.
+    /// </summary>
+    /// <typeparam name="T">The service type to resolve.</typeparam>
+    /// <exception cref="InvalidOperationException">No service of type <typeparamref name="T"/> is registered.</exception>
+    public T GetRequiredService<T>() where T : notnull
+        => HttpContext.RequestServices.GetRequiredService<T>();
+
+    /// <summary>
+    /// Resolves a service from the request's <see cref="HttpContext.RequestServices"/> container,
+    /// returning <c>null</c> when it is not registered. Prefer this over <see cref="GetRequiredService{T}"/>
+    /// when a missing service should be handled with a tailored diagnostic rather than the default
+    /// container exception.
+    /// </summary>
+    /// <typeparam name="T">The service type to resolve.</typeparam>
+    public T? GetService<T>()
+        => HttpContext.RequestServices.GetService<T>();
 }
