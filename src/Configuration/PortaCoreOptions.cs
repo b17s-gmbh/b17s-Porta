@@ -86,6 +86,15 @@ public sealed class PortaCoreOptions
     public bool EnableTelemetry { get; set; } = true;
 
     /// <summary>
+    /// Whether to tag each cached aggregation leg's <c>bff.backend</c> span with its (hashed) cache key
+    /// (<c>cache.key.hash</c>). Off by default: the key varies per route/body/user, so emitting it on
+    /// every span adds high-cardinality noise. Enable temporarily to debug cache hit/miss behaviour in
+    /// production. Has no effect unless <see cref="EnableTelemetry"/> is also enabled.
+    /// Default: false.
+    /// </summary>
+    public bool VerboseCacheTelemetry { get; set; }
+
+    /// <summary>
     /// Maximum number of bytes the BFF will buffer from a backend response body before
     /// failing the call with <see cref="b17s.Porta.Transformers.BackendErrorType.InvalidResponse"/>.
     /// Applies to the deserialized-response paths (JSON/XML/form) in
