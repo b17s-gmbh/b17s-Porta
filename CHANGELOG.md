@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0-rc.5] - 2026-06-18
+### Added
+- Per backend call caching
+- Caching documentation
+
 ## [0.2.1-rc.4] - 2026-06-16
 ### Fixed
 - `AddPortaReferenceTokenScheme` / `AddReferenceTokenAuthentication` now register `IDiscoveryService`, which `ReferenceTokenService` depends on for introspection-endpoint discovery. A reference-token-only BFF previously had an unsatisfiable singleton and failed DI validation at startup.
