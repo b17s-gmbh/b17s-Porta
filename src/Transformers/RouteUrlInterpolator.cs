@@ -1,3 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+
 namespace b17s.Porta.Transformers;
 
 /// <summary>
@@ -82,6 +85,92 @@ internal static class RouteUrlInterpolator
         return url + (url.Contains('?', StringComparison.Ordinal)
             ? string.Concat("&", inboundQueryString.AsSpan(1))
             : inboundQueryString);
+    }
+
+    /// <summary>
+    /// Detects catch-all route parameters that the backend URL template fills with a plain,
+    /// single-segment placeholder. A route segment like <c>{**name}</c> (or <c>{*name}</c>) binds a
+    /// multi-segment path, but a plain <c>{name}</c> in the backend template runs through
+    /// single-segment encoding (see <see cref="Interpolate"/>), turning each <c>/</c> into <c>%2F</c>
+    /// and collapsing the forwarded path to one segment - which usually 404s at the backend.
+    /// Returns the bare names of any such mismatched parameters so callers can warn at startup;
+    /// empty when the templates agree or there are no catch-all parameters.
+    /// </summary>
+    public static IReadOnlyList<string> FindCatchAllPlaceholderMismatches(
+        string? routePattern, string? backendUrlTemplate)
+    {
+        if (string.IsNullOrEmpty(routePattern) || string.IsNullOrEmpty(backendUrlTemplate))
+        {
+            return Array.Empty<string>();
+        }
+
+        List<string>? mismatches = null;
+        foreach (var name in EnumerateCatchAllParameterNames(routePattern))
+        {
+            // Backend already opts into subtree proxying for this parameter - slashes preserved, no mismatch.
+            if (backendUrlTemplate.Contains($"{{**{name}}}", StringComparison.OrdinalIgnoreCase) ||
+                backendUrlTemplate.Contains($"{{*{name}}}", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Backend fills the catch-all value through a plain placeholder -> '/' separators get encoded.
+            if (backendUrlTemplate.Contains($"{{{name}}}", StringComparison.OrdinalIgnoreCase))
+            {
+                (mismatches ??= []).Add(name);
+            }
+        }
+
+        return mismatches is null ? Array.Empty<string>() : mismatches;
+    }
+
+    private static IEnumerable<string> EnumerateCatchAllParameterNames(string routePattern)
+    {
+        var index = 0;
+        while (index < routePattern.Length)
+        {
+            var open = routePattern.IndexOf('{', index);
+            if (open < 0)
+            {
+                yield break;
+            }
+
+            var close = routePattern.IndexOf('}', open + 1);
+            if (close < 0)
+            {
+                yield break;
+            }
+
+            var inner = routePattern[(open + 1)..close];
+            index = close + 1;
+
+            // Catch-all syntax is '{*name}' or '{**name}'. Anything else is a single-segment parameter.
+            if (inner.StartsWith("**", StringComparison.Ordinal))
+            {
+                inner = inner[2..];
+            }
+            else if (inner.StartsWith('*'))
+            {
+                inner = inner[1..];
+            }
+            else
+            {
+                continue;
+            }
+
+            // Strip an optional route constraint or default value: '{**path:regex}' / '{**path=default}'.
+            var delimiter = inner.IndexOfAny([':', '=']);
+            if (delimiter >= 0)
+            {
+                inner = inner[..delimiter];
+            }
+
+            inner = inner.Trim();
+            if (inner.Length > 0)
+            {
+                yield return inner;
+            }
+        }
     }
 
     private static string ReplacePlaceholder(string url, string placeholder, string? value, bool catchAll)
@@ -206,3 +295,43 @@ internal static class RouteUrlInterpolator
 /// cross a security boundary (path traversal, host change, query/fragment smuggling).
 /// </summary>
 internal sealed class InvalidRouteValueException(string message) : Exception(message);
+
+/// <summary>
+/// Startup diagnostics for route/backend template interpolation, shared by the raw-forward and
+/// typed endpoint builders so the two can't drift apart. EventId range 14060-14069 is reserved
+/// for this category.
+/// </summary>
+internal static partial class RouteInterpolationLogging
+{
+    /// <summary>
+    /// Logs a warning (never throws - a misconfiguration here is recoverable and may even be
+    /// intentional for single-segment traffic) when a catch-all route is paired with a plain
+    /// backend placeholder. No-op when the templates agree or no service provider/logger is available.
+    /// </summary>
+    public static void WarnOnCatchAllPlaceholderMismatch(
+        IServiceProvider services, string method, string? routePattern, string? backendUrl)
+    {
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(routePattern, backendUrl);
+        if (mismatches.Count == 0)
+        {
+            return;
+        }
+
+        var logger = services.GetService<ILoggerFactory>()?.CreateLogger(typeof(RouteUrlInterpolator));
+        logger?.CatchAllPlaceholderMismatch(
+            method,
+            routePattern!,
+            string.Join(", ", mismatches),
+            backendUrl!,
+            string.Join(", ", mismatches.Select(name => $"{{**{name}}}")));
+    }
+
+    [LoggerMessage(EventId = 14060, Level = LogLevel.Warning,
+        Message = "Porta: route '{Method} {RoutePattern}' binds catch-all parameter(s) {Parameters}, but the " +
+                  "backend URL '{BackendUrl}' fills them with a plain single-segment placeholder. A plain " +
+                  "placeholder encodes '/' as %2F, collapsing the forwarded path to a single segment, so " +
+                  "multi-segment requests will likely 404 at the backend. Use the catch-all form in the " +
+                  "backend URL (e.g. {Suggestion}) to preserve path separators.")]
+    public static partial void CatchAllPlaceholderMismatch(
+        this ILogger logger, string method, string routePattern, string parameters, string backendUrl, string suggestion);
+}

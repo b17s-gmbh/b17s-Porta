@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1-rc.6] - 2026-06-23
+### Added
+- Warning during bootstrap and docs regarding backend catch-all route interpolation
+
 ## [0.3.0-rc.5] - 2026-06-18
 ### Added
 - Per backend call caching

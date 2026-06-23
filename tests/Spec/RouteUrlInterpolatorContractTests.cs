@@ -130,4 +130,88 @@ public class RouteUrlInterpolatorContractTests
 
         Assert.Equal("https://backend.internal/anything/my%2Fnested", result);
     }
+
+    // --- FindCatchAllPlaceholderMismatches: the startup-warning detector ---
+
+    [Fact]
+    public void Mismatch_CatchAllRoute_PlainBackendPlaceholder_IsReported()
+    {
+        // The reported regression: catch-all route, plain backend placeholder -> slashes encoded -> 404.
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(
+            "/vendure/documents/{**rest}", "https://backend/documents/{rest}");
+
+        Assert.Equal(["rest"], mismatches);
+    }
+
+    [Fact]
+    public void Mismatch_CatchAllOnBothSides_IsClean()
+    {
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(
+            "/vendure/documents/{**rest}", "https://backend/documents/{**rest}");
+
+        Assert.Empty(mismatches);
+    }
+
+    [Fact]
+    public void Mismatch_SingleStarCatchAllRoute_PlainBackend_IsReported()
+    {
+        // Both '{*rest}' and '{**rest}' bind to the bare name and are subtree opt-ins; a plain
+        // backend placeholder still encodes the separators.
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(
+            "/files/{*rest}", "https://backend/files/{rest}");
+
+        Assert.Equal(["rest"], mismatches);
+    }
+
+    [Fact]
+    public void Mismatch_SingleStarBackendPlaceholder_IsAcceptedForCatchAllRoute()
+    {
+        // '{*rest}' in the backend is also slash-preserving, so it is not a mismatch.
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(
+            "/files/{**rest}", "https://backend/files/{*rest}");
+
+        Assert.Empty(mismatches);
+    }
+
+    [Fact]
+    public void Mismatch_PlainRoute_PlainBackend_IsClean()
+    {
+        // No catch-all anywhere: single-segment encoding is correct and intended, not a mismatch.
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(
+            "/users/{id}", "https://backend/users/{id}");
+
+        Assert.Empty(mismatches);
+    }
+
+    [Fact]
+    public void Mismatch_CaseInsensitive_MatchingRoutingSemantics()
+    {
+        // RouteValueDictionary keys are OrdinalIgnoreCase; '{Rest}' in the backend satisfies '{**rest}'.
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(
+            "/files/{**rest}", "https://backend/files/{Rest}");
+
+        Assert.Equal(["rest"], mismatches);
+    }
+
+    [Fact]
+    public void Mismatch_CatchAllParameterAbsentFromBackend_IsNotReported()
+    {
+        // If the backend template doesn't reference the catch-all at all, there's nothing to encode
+        // wrong - that's a different (intentional) shape, not the mismatch we warn about.
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(
+            "/files/{**rest}", "https://backend/static/path");
+
+        Assert.Empty(mismatches);
+    }
+
+    [Theory]
+    [InlineData(null, "https://backend/x/{rest}")]
+    [InlineData("/files/{**rest}", null)]
+    [InlineData("", "")]
+    public void Mismatch_NullOrEmptyTemplates_AreClean(string? routePattern, string? backendUrl)
+    {
+        var mismatches = RouteUrlInterpolator.FindCatchAllPlaceholderMismatches(routePattern, backendUrl);
+
+        Assert.Empty(mismatches);
+    }
 }

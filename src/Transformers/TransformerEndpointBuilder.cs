@@ -88,6 +88,15 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
     /// <param name="method">Backend HTTP method</param>
     /// <param name="url">Backend URL (supports Kubernetes service names: http://user-service/api/users)</param>
     /// <param name="contentType">Content type for serializing request body. Default: JSON</param>
+    /// <remarks>
+    /// Placeholder syntax must match the route. A single-segment placeholder (<c>{id}</c>) is
+    /// encoded as one path segment, so any <c>/</c> in the value becomes <c>%2F</c>. For a
+    /// catch-all route parameter (<c>{**rest}</c>/<c>{*rest}</c>) that carries a multi-segment
+    /// path, use the same catch-all syntax in the backend URL (<c>{**rest}</c>) so the <c>/</c>
+    /// separators are preserved - a plain <c>{rest}</c> here encodes them and the backend will
+    /// 404 on nested paths. A startup warning is logged when a catch-all route is paired with a
+    /// plain backend placeholder.
+    /// </remarks>
     public TBuilder ToBackend(string method, string url, ContentType contentType = ContentType.Json)
     {
         _backendMethod = method.ToUpperInvariant();
@@ -314,6 +323,11 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
         ValidateTrustedHostsForUserTokenForwarding();
         ValidateTokenExchangeAudienceResolvable();
         ValidateCacheableLegsAtStartup();
+
+        // Warn (don't fail) when a catch-all route is paired with a plain backend placeholder: the
+        // '/' separators in the bound value would be encoded to %2F and the backend would 404 on
+        // nested paths. No-op for multi-backend (ToBackends) endpoints, which set no single _backendUrl.
+        RouteInterpolationLogging.WarnOnCatchAllPlaceholderMismatch(_services, _httpMethod!, _routePattern, _backendUrl);
 
         // Capture values for closure
         var namedBackends = _namedBackends;
