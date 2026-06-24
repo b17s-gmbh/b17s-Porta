@@ -96,6 +96,21 @@ app.MapRawForward()
     .Build();
 ```
 
+> **Catch-all routes must use catch-all syntax on _both_ sides.** A plain `{name}`
+> placeholder is encoded as a single path segment — any `/` in the value becomes
+> `%2F` (secure by default, so a route value can't introduce new path segments).
+> To proxy a multi-segment subtree, use `{**name}` in **both** the route pattern
+> and the backend URL. Mixing them (catch-all route, plain backend placeholder)
+> encodes the slashes and 404s at the backend:
+>
+> ```csharp
+> app.MapRawForward()
+>     .FromGet("/files/{**rest}")
+>     .ToGet("https://files-api.internal/files/{**rest}")  // not {rest}
+>     .Build();
+> // /files/a/b/c.pdf  ->  https://files-api.internal/files/a/b/c.pdf
+> ```
+
 ### Introducing a Transformer
 
 A transformer is where you reshape the backend response. Inherit a base class (here

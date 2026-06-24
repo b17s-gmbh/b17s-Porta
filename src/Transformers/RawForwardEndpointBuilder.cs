@@ -38,9 +38,18 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
     }
 
     /// <summary>
-    /// Specifies the backend HTTP method and URL.
-    /// URL can contain route parameter placeholders like {id} that will be interpolated.
+    /// Specifies the backend HTTP method and URL. The URL may contain route-parameter
+    /// placeholders that are interpolated from the incoming request.
     /// </summary>
+    /// <remarks>
+    /// Placeholder syntax must match the route. A single-segment placeholder (<c>{id}</c>) is
+    /// encoded as one path segment, so any <c>/</c> in the value becomes <c>%2F</c>. For a
+    /// catch-all route parameter (<c>{**rest}</c>/<c>{*rest}</c>) that carries a multi-segment
+    /// path, use the same catch-all syntax in the backend URL (<c>{**rest}</c>) so the <c>/</c>
+    /// separators are preserved - a plain <c>{rest}</c> here encodes them and the backend will
+    /// 404 on nested paths. A startup warning is logged when a catch-all route is paired with a
+    /// plain backend placeholder.
+    /// </remarks>
     public RawForwardEndpointBuilder<TTransformer> ToBackend(string method, string url)
     {
         _backendMethod = method.ToUpperInvariant();
@@ -166,6 +175,11 @@ public sealed class RawForwardEndpointBuilder<TTransformer> : BffEndpointBuilder
                     "audience, or use a transformer/pass-through endpoint with WithTokenExchange(audience).");
             }
         }
+
+        // Warn (don't fail) when a catch-all route is paired with a plain backend placeholder: the
+        // '/' separators in the bound value would be encoded to %2F and the backend would 404 on
+        // nested paths. See RouteUrlInterpolator for the encoding rules.
+        RouteInterpolationLogging.WarnOnCatchAllPlaceholderMismatch(_services, _httpMethod!, _routePattern, _backendUrl);
 
         // Capture values for closure
         var backendMethod = _backendMethod;
