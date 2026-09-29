@@ -3,6 +3,7 @@ using System.Text;
 
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Tests.Fixtures;
 using b17s.Porta.Transformers;
 
 using Microsoft.AspNetCore.Http;
@@ -502,6 +503,141 @@ public sealed class DefaultAuthHandlersTests
 
             Assert.Contains(expectedMissing, ex.Message);
             Assert.Null(request.Headers.Authorization);
+        }
+
+        [Fact]
+        public async Task PrivateKeyJwt_PassesKeyToTokenService_WithoutSecret()
+        {
+            using var key = TestSigningKey.Rsa();
+            var tokenService = new FakeClientCredentialsTokenService();
+            var handler = Handler(new BackendServiceOptions
+            {
+                ClientCredentials = new ClientCredentialsOptions
+                {
+                    TokenEndpoint = "https://login.example.com/tenant/oauth2/v2.0/token",
+                    ClientId = "entra-app",
+                    PrivateKeyJwt = { Key = key.PemWithCertificate },
+                },
+            }, tokenService);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://backend.test/resource");
+
+            await handler.ApplyAuthAsync(request, Context());
+
+            Assert.Equal("entra-app", tokenService.LastRequest!.ClientId);
+            Assert.Equal(string.Empty, tokenService.LastRequest.ClientSecret);
+            Assert.Equal(key.PemWithCertificate, tokenService.LastRequest.PrivateKeyJwt!.Key);
+            Assert.NotNull(request.Headers.Authorization);
+        }
+
+        [Fact]
+        public async Task PrivateKeyJwt_ZitadelKeyFile_PassesConfiguredClientIdThrough()
+        {
+            // The handler does not load keys: an empty ClientId is passed as-is and the token
+            // service resolves the client id from the Zitadel key file.
+            using var key = TestSigningKey.Rsa();
+            var tokenService = new FakeClientCredentialsTokenService();
+            var handler = Handler(new BackendServiceOptions
+            {
+                ClientCredentials = new ClientCredentialsOptions
+                {
+                    TokenEndpoint = "https://idp.test/oauth/v2/token",
+                    PrivateKeyJwt = { Key = key.ZitadelKeyFile(clientId: "app@project") },
+                },
+            }, tokenService);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://backend.test/resource");
+
+            await handler.ApplyAuthAsync(request, Context());
+
+            Assert.Equal(string.Empty, tokenService.LastRequest!.ClientId);
+            Assert.NotNull(tokenService.LastRequest.PrivateKeyJwt);
+        }
+
+        [Fact]
+        public async Task PrivateKeyJwt_AndClientSecret_ThrowsConfigurationError()
+        {
+            using var key = TestSigningKey.Rsa();
+            var handler = Handler(new BackendServiceOptions
+            {
+                ClientCredentials = new ClientCredentialsOptions
+                {
+                    TokenEndpoint = "https://idp.test/token",
+                    ClientId = "id",
+                    ClientSecret = "secret",
+                    PrivateKeyJwt = { Key = key.Pkcs8Pem },
+                },
+            });
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://backend.test/resource");
+
+            var ex = await Assert.ThrowsAsync<BackendAuthConfigurationException>(
+                () => handler.ApplyAuthAsync(request, Context()));
+
+            Assert.Contains("both ClientSecret and PrivateKeyJwt", ex.Message);
+        }
+
+        [Fact]
+        public async Task TokenServiceConfigurationError_IsTranslated_WithConfigPath()
+        {
+            // The token service reports an unusable key as ClientCredentialsConfigurationException;
+            // the handler must surface it as BackendAuthConfigurationException so BackendCaller maps
+            // it to a 5xx configuration error instead of a 401 user-auth failure.
+            var tokenService = new FakeClientCredentialsTokenService(
+                onCall: _ => throw new ClientCredentialsConfigurationException("PrivateKeyJwt is invalid: broken"));
+            var options = OptionsWithGlobal();
+            options.ClientCredentialsBackends["orders"] = new ClientCredentialsOptions
+            {
+                TokenEndpoint = "https://idp.test/token",
+                ClientId = "orders-m2m",
+                ClientSecret = "orders-secret",
+            };
+            var handler = Handler(options, tokenService);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://backend.test/resource");
+
+            var ex = await Assert.ThrowsAsync<BackendAuthConfigurationException>(
+                () => handler.ApplyAuthAsync(request, Context(backendName: "orders")));
+
+            Assert.Equal("BackendService:ClientCredentialsBackends:orders: PrivateKeyJwt is invalid: broken", ex.Message);
+            Assert.Null(request.Headers.Authorization);
+        }
+
+        [Theory]
+        [InlineData("id", "not a key", "PrivateKeyJwt is invalid")]
+        [InlineData("", "pem", "ClientId is required")]
+        public async Task PrivateKeyJwt_UnusableConfig_WithRealTokenService_IsConfigurationError(
+            string clientId, string keyKind, string expected)
+        {
+            // End to end through the real token service: a broken key or a PEM key without a client
+            // id is operator misconfiguration (5xx-class), and the IdP is never called.
+            using var key = TestSigningKey.Rsa();
+            var tokenService = new ClientCredentialsTokenService(
+                new ThrowingHttpClientFactory(),
+                new StaticOptionsMonitor<PortaCoreOptions>(new PortaCoreOptions()),
+                TimeProvider.System,
+                NullLogger<ClientCredentialsTokenService>.Instance);
+            var handler = new ClientCredentialsAuthHandler(
+                Options.Create(new BackendServiceOptions
+                {
+                    ClientCredentials = new ClientCredentialsOptions
+                    {
+                        TokenEndpoint = "https://idp.test/token",
+                        ClientId = clientId,
+                        PrivateKeyJwt = { Key = keyKind == "pem" ? key.Pkcs8Pem : keyKind },
+                    },
+                }),
+                tokenService,
+                NullLogger<ClientCredentialsAuthHandler>.Instance);
+            using var request = new HttpRequestMessage(HttpMethod.Get, "https://backend.test/resource");
+
+            var ex = await Assert.ThrowsAsync<BackendAuthConfigurationException>(
+                () => handler.ApplyAuthAsync(request, Context()));
+
+            Assert.StartsWith("BackendService:ClientCredentials: ", ex.Message);
+            Assert.Contains(expected, ex.Message);
+        }
+
+        private sealed class ThrowingHttpClientFactory : IHttpClientFactory
+        {
+            public HttpClient CreateClient(string name) =>
+                throw new InvalidOperationException("The token endpoint must not be called.");
         }
 
         [Fact]

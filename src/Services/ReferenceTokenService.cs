@@ -27,6 +27,11 @@ public sealed class ReferenceTokenService(
     /// </summary>
     public const string HttpClientName = "ReferenceTokenIntrospection";
 
+    private const string SignerSlot = "ReferenceTokenAuth";
+
+    // private_key_jwt key material, parsed once per configured value (reloads swap it).
+    private readonly ClientAssertionSignerCache _signers = new();
+
     /// <inheritdoc/>
     public async Task<ReferenceTokenIntrospectionResult?> IntrospectTokenAsync(string token, CancellationToken cancellationToken = default)
     {
@@ -62,7 +67,35 @@ public sealed class ReferenceTokenService(
         // Build payload and add client credentials
         var payload = new Dictionary<string, string> { { "token", token } };
 
-        if (!string.IsNullOrEmpty(options.ClientId) && !string.IsNullOrEmpty(options.ClientSecret))
+        if (options.PrivateKeyJwt.IsConfigured)
+        {
+            string clientAssertion;
+            try
+            {
+                var signer = _signers.GetOrLoad(SignerSlot, options.PrivateKeyJwt);
+                var clientId = signer.ResolveClientId(options.ClientId, "ReferenceTokenAuth.ClientId");
+
+                // RFC 7523 bis recommends the authorization server's issuer identifier as the sole
+                // audience (avoids audience injection across endpoints); Zitadel requires it and
+                // Keycloak accepts it. Okta needs the endpoint URL, configured via Audience. Fall
+                // back to the configured authority when discovery carries no issuer.
+                var audience = options.PrivateKeyJwt.Audience
+                    ?? (!string.IsNullOrEmpty(config!.Issuer) ? config.Issuer : options.Authority);
+
+                clientAssertion = signer.CreateAssertion(clientId, audience, DateTimeOffset.UtcNow);
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Fail closed: never fall back to an unauthenticated introspection call. The
+                // startup validator normally catches this at boot; this covers bad reloads.
+                logger.IntrospectionPrivateKeyJwtUnavailable(ex.Message);
+                return null;
+            }
+
+            payload["client_assertion_type"] = ClientAssertionSigner.ClientAssertionType;
+            payload["client_assertion"] = clientAssertion;
+        }
+        else if (!string.IsNullOrEmpty(options.ClientId) && !string.IsNullOrEmpty(options.ClientSecret))
         {
             if (options.UseBasicAuthForIntrospection)
             {
@@ -201,4 +234,8 @@ internal static partial class ReferenceTokenServiceLogging
     [LoggerMessage(EventId = 13603, Level = LogLevel.Warning,
         Message = "Token introspection failed: response body exceeded the {MaxBytes}-byte limit and was rejected")]
     public static partial void IntrospectionResponseTooLarge(this ILogger logger, long maxBytes);
+
+    [LoggerMessage(EventId = 13604, Level = LogLevel.Error,
+        Message = "Token introspection failed: private_key_jwt client assertion could not be created: {Reason}")]
+    public static partial void IntrospectionPrivateKeyJwtUnavailable(this ILogger logger, string reason);
 }

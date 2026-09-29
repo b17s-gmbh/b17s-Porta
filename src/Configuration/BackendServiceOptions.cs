@@ -1,3 +1,5 @@
+using b17s.Porta.Auth.Tokens;
+
 namespace b17s.Porta.Configuration;
 
 /// <summary>
@@ -148,10 +150,10 @@ public sealed class ApiKeyOptions
 
 /// <summary>
 /// OAuth2 client-credentials (RFC 6749 §4.4) configuration for the built-in ClientCredentials
-/// backend-auth handler. All three of <see cref="TokenEndpoint"/>, <see cref="ClientId"/> and
-/// <see cref="ClientSecret"/> are required when the policy is selected - the handler fails the
-/// call as a configuration error when any is missing. Deliberately not inherited from
-/// <c>SessionAuthentication</c>.
+/// backend-auth handler. <see cref="TokenEndpoint"/>, <see cref="ClientId"/> and one client
+/// credential - <see cref="ClientSecret"/> or <see cref="PrivateKeyJwt"/> - are required when the
+/// policy is selected; the handler fails the call as a configuration error otherwise.
+/// Deliberately not inherited from <c>SessionAuthentication</c>.
 /// </summary>
 public sealed class ClientCredentialsOptions
 {
@@ -168,8 +170,17 @@ public sealed class ClientCredentialsOptions
 
     /// <summary>
     /// The OAuth client secret. Secret-classified - never log this value.
+    /// Mutually exclusive with <see cref="PrivateKeyJwt"/>.
     /// </summary>
     public string ClientSecret { get; set; } = string.Empty;
+
+    /// <summary>
+    /// <c>private_key_jwt</c> client authentication (RFC 7523 §2.2) instead of <see cref="ClientSecret"/>,
+    /// e.g. an Entra ID certificate credential or an Okta / Keycloak client key. The assertion audience
+    /// defaults to <see cref="TokenEndpoint"/>. <see cref="ClientId"/> may be left empty only for a
+    /// Zitadel key file, which carries its own client id.
+    /// </summary>
+    public PrivateKeyJwtOptions PrivateKeyJwt { get; set; } = new();
 
     /// <summary>
     /// Optional space-separated scopes requested with the grant. Omitted from the token
