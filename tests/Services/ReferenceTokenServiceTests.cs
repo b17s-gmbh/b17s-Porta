@@ -8,10 +8,12 @@ using b17s.Porta.Auth.Discovery;
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
 using b17s.Porta.Services;
+using b17s.Porta.Tests.Fixtures;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace b17s.Porta.Tests.Services;
@@ -337,8 +339,154 @@ public sealed class ReferenceTokenServiceTests
         Assert.Contains("idp-error-detail", logger.Entries[^1].Message);
     }
 
-    private static OpenIdConnectConfiguration WithIntrospectionEndpoint() =>
-        new() { AdditionalData = { ["introspection_endpoint"] = "https://idp.test/connect/introspect" } };
+    [Fact]
+    public async Task IntrospectTokenAsync_PrivateKeyJwt_ZitadelKeyFile_SendsSignedClientAssertion_NoSecret()
+    {
+        // RFC 7523 §2.2 / Zitadel "Private Key JWT": the client proves possession of the key-file
+        // key via a signed assertion in the form body. No Basic header, no secret, and the
+        // assertion must verify against the public half of the key with the expected claims.
+        using var key = TestSigningKey.Rsa();
+        var captured = new RecordingHandler(_ => Ok(new IntrospectionResponse { Active = true }));
+        var options = new ReferenceTokenAuthOptions
+        {
+            Authority = "https://idp.test",
+            PrivateKeyJwt = { Key = key.ZitadelKeyFile(clientId: "app@project", keyId: "zkid") },
+            UseBasicAuthForIntrospection = true, // ignored in private_key_jwt mode
+        };
+        var sut = Build(options, captured, WithIntrospectionEndpoint(issuer: "https://idp.test/"));
+
+        await sut.IntrospectTokenAsync("opaque", TestContext.Current.CancellationToken);
+
+        Assert.Null(captured.LastRequest!.Headers.Authorization);
+        var form = captured.LastForm!;
+        Assert.Equal("opaque", form["token"]);
+        Assert.Equal("urn:ietf:params:oauth:client-assertion-type:jwt-bearer", form["client_assertion_type"]);
+        Assert.False(form.ContainsKey("client_secret"));
+
+        // Audience is the discovered issuer, verbatim (Zitadel requires it).
+        var jwt = await key.ValidateAsync(form["client_assertion"], "app@project", "https://idp.test/");
+        Assert.Equal("zkid", jwt.Kid);
+        Assert.Equal("app@project", jwt.Subject);
+    }
+
+    [Fact]
+    public async Task IntrospectTokenAsync_PrivateKeyJwt_PemKey_UsesConfiguredClientIdAndAudience()
+    {
+        // Okta: PEM key + kid from the console, client id from config, and aud must be the URL
+        // of the endpoint being called - hence the explicit Audience.
+        using var key = TestSigningKey.Rsa();
+        var captured = new RecordingHandler(_ => Ok(new IntrospectionResponse { Active = true }));
+        var options = new ReferenceTokenAuthOptions
+        {
+            Authority = "https://idp.test",
+            ClientId = "okta-client",
+            PrivateKeyJwt =
+            {
+                Key = key.Pkcs8Pem,
+                KeyId = "okta-kid",
+                Audience = "https://idp.test/connect/introspect",
+            },
+        };
+        var sut = Build(options, captured, WithIntrospectionEndpoint(issuer: "https://idp.test"));
+
+        await sut.IntrospectTokenAsync("opaque", TestContext.Current.CancellationToken);
+
+        var jwt = await key.ValidateAsync(captured.LastForm!["client_assertion"], "okta-client", "https://idp.test/connect/introspect");
+        Assert.Equal("okta-kid", jwt.Kid);
+    }
+
+    [Fact]
+    public async Task IntrospectTokenAsync_PrivateKeyJwt_AudienceFallsBackToAuthority_WhenNoDiscoveredIssuer()
+    {
+        using var key = TestSigningKey.Rsa();
+        var captured = new RecordingHandler(_ => Ok(new IntrospectionResponse { Active = true }));
+        var options = new ReferenceTokenAuthOptions { Authority = "https://idp.test", PrivateKeyJwt = { Key = key.ZitadelKeyFile() } };
+        var sut = Build(options, captured, WithIntrospectionEndpoint());
+
+        await sut.IntrospectTokenAsync("opaque", TestContext.Current.CancellationToken);
+
+        var jwt = new JsonWebToken(captured.LastForm!["client_assertion"]);
+        Assert.Equal(["https://idp.test"], jwt.Audiences);
+    }
+
+    [Fact]
+    public async Task IntrospectTokenAsync_PrivateKeyJwt_FreshAssertionPerCall()
+    {
+        // Each introspection mints a new assertion with a unique jti, so an IdP that enforces
+        // single-use assertions (RFC 7523 §3 item 7) never sees a replay.
+        using var key = TestSigningKey.Rsa();
+        var captured = new RecordingHandler(_ => Ok(new IntrospectionResponse { Active = true }));
+        var sut = Build(
+            new ReferenceTokenAuthOptions { Authority = "https://idp.test", PrivateKeyJwt = { Key = key.ZitadelKeyFile() } },
+            captured, WithIntrospectionEndpoint());
+
+        await sut.IntrospectTokenAsync("a", TestContext.Current.CancellationToken);
+        var first = new JsonWebToken(captured.LastForm!["client_assertion"]).Id;
+        await sut.IntrospectTokenAsync("b", TestContext.Current.CancellationToken);
+        var second = new JsonWebToken(captured.LastForm!["client_assertion"]).Id;
+
+        Assert.NotEqual(first, second);
+    }
+
+    [Fact]
+    public async Task IntrospectTokenAsync_PrivateKeyJwt_LoadsKeyFromFile()
+    {
+        using var key = TestSigningKey.Rsa();
+        var path = key.WriteTempFile(key.ZitadelKeyFile(keyId: "file-kid"));
+        var captured = new RecordingHandler(_ => Ok(new IntrospectionResponse { Active = true }));
+        var sut = Build(
+            new ReferenceTokenAuthOptions { Authority = "https://idp.test", PrivateKeyJwt = { KeyFile = path } },
+            captured, WithIntrospectionEndpoint());
+
+        await sut.IntrospectTokenAsync("opaque", TestContext.Current.CancellationToken);
+
+        Assert.Equal("file-kid", new JsonWebToken(captured.LastForm!["client_assertion"]).Kid);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task IntrospectTokenAsync_PrivateKeyJwt_Unusable_ReturnsNull_NoHttpCall(bool missingFile)
+    {
+        // A key that fails to load, or a PEM key without a ClientId (e.g. a bad appsettings reload
+        // past the startup validator), must fail closed - never an unauthenticated introspection.
+        using var key = TestSigningKey.Rsa();
+        var handler = new RecordingHandler(_ => Ok(new IntrospectionResponse { Active = true }));
+        var options = new ReferenceTokenAuthOptions { Authority = "https://idp.test" };
+        if (missingFile)
+            options.PrivateKeyJwt.KeyFile = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json");
+        else
+            options.PrivateKeyJwt.Key = key.Pkcs8Pem; // no ClientId configured
+        var sut = Build(options, handler, WithIntrospectionEndpoint());
+
+        var result = await sut.IntrospectTokenAsync("opaque", TestContext.Current.CancellationToken);
+
+        Assert.Null(result);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task IntrospectTokenAsync_PrivateKeyJwt_ReloadedKey_TakesEffect()
+    {
+        // The parsed key is cached per configured value; an options reload that swaps the key
+        // content is picked up on the next call.
+        using var key = TestSigningKey.Rsa();
+        var captured = new RecordingHandler(_ => Ok(new IntrospectionResponse { Active = true }));
+        var monitor = new MutableOptionsMonitor<ReferenceTokenAuthOptions>(
+            new ReferenceTokenAuthOptions { Authority = "https://idp.test", PrivateKeyJwt = { Key = key.ZitadelKeyFile(keyId: "kid-v1") } });
+        var sut = BuildWithMonitor(monitor, captured, WithIntrospectionEndpoint());
+
+        await sut.IntrospectTokenAsync("tok", TestContext.Current.CancellationToken);
+        Assert.Equal("kid-v1", new JsonWebToken(captured.LastForm!["client_assertion"]).Kid);
+
+        monitor.Current = new ReferenceTokenAuthOptions { Authority = "https://idp.test", PrivateKeyJwt = { Key = key.ZitadelKeyFile(keyId: "kid-v2") } };
+
+        await sut.IntrospectTokenAsync("tok", TestContext.Current.CancellationToken);
+        Assert.Equal("kid-v2", new JsonWebToken(captured.LastForm!["client_assertion"]).Kid);
+    }
+
+    private static OpenIdConnectConfiguration WithIntrospectionEndpoint(string? issuer = null) =>
+        new() { Issuer = issuer, AdditionalData = { ["introspection_endpoint"] = "https://idp.test/connect/introspect" } };
 
     private static HttpResponseMessage Ok(IntrospectionResponse response) =>
         new(HttpStatusCode.OK) { Content = JsonContent.Create(response) };

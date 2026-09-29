@@ -10,7 +10,7 @@ namespace b17s.Porta.Extensions;
 public static class TelemetryExtensions
 {
     /// <summary>
-    /// Registers <see cref="PortaTelemetryMiddleware"/>, which instruments every request that flows
+    /// Registers Porta's request-lifecycle telemetry middleware, which instruments every request that flows
     /// through it with request-lifecycle telemetry.
     /// </summary>
     /// <param name="app">The application builder.</param>

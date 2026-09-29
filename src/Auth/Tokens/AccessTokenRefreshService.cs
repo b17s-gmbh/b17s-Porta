@@ -22,7 +22,7 @@ namespace b17s.Porta.Auth.Tokens;
 /// Per-user locking ensures only one refresh fires concurrently for the same
 /// principal, regardless of how many in-flight requests trigger the check.
 /// </summary>
-public sealed class AccessTokenRefreshService : IAccessTokenRefreshService
+internal sealed class AccessTokenRefreshService : IAccessTokenRefreshService
 {
     private const string CookieScheme = CookieAuthenticationDefaults.AuthenticationScheme;
 

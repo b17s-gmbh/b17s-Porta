@@ -111,7 +111,7 @@ catalog.MapGroup("/api/v{version:apiVersion}").HasApiVersion(2.0);
 ```
 
 > **Coexistence:** Asp.Versioning selects endpoints through its own `ApiVersionMatcherPolicy`, and
-> Porta's `.When()` uses `WhenPredicateMatcherPolicy`. Both are registered `MatcherPolicy` services,
+> Porta's `.When()` uses its own `MatcherPolicy`. Both are registered `MatcherPolicy` services,
 > so ASP.NET Core runs both and they compose. Just don't gate the *same* dimension twice (e.g. don't
 > `.When(header == "2")` **and** `HasApiVersion(2.0)` off the same header) — pick one mechanism per
 > version axis.

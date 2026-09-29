@@ -67,7 +67,7 @@ public abstract class TransformerEndpointBuilderBase<TTransformer, TBuilder> : B
     /// </summary>
     /// <param name="predicate">A function that evaluates whether this endpoint should handle the request</param>
     /// <remarks>
-    /// This participates in ASP.NET Core's endpoint routing via <see cref="WhenPredicateMatcherPolicy"/>.
+    /// This participates in ASP.NET Core's endpoint routing via a registered <c>MatcherPolicy</c>.
     /// When the predicate returns false, the endpoint is marked invalid during route matching,
     /// allowing other endpoints with the same route pattern to be selected.
     /// <para/>

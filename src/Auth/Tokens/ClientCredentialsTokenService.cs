@@ -20,11 +20,23 @@ public sealed record ClientCredentialsTokenRequest
     /// <summary>The IdP token endpoint the grant is posted to.</summary>
     public required string TokenEndpoint { get; init; }
 
-    /// <summary>The OAuth client id.</summary>
+    /// <summary>
+    /// The OAuth client id. May be empty when <see cref="PrivateKeyJwt"/> holds a Zitadel key file,
+    /// which carries its own client id; if set, it must then match the key file's.
+    /// </summary>
     public required string ClientId { get; init; }
 
-    /// <summary>The OAuth client secret. Secret-classified - never log this value.</summary>
-    public required string ClientSecret { get; init; }
+    /// <summary>
+    /// The OAuth client secret. Secret-classified - never log this value. Ignored when
+    /// <see cref="PrivateKeyJwt"/> is configured.
+    /// </summary>
+    public string ClientSecret { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Optional <c>private_key_jwt</c> client authentication (RFC 7523 §2.2). When configured, a signed
+    /// client assertion (audience defaulting to <see cref="TokenEndpoint"/>) is sent instead of the secret.
+    /// </summary>
+    public PrivateKeyJwtOptions? PrivateKeyJwt { get; init; }
 
     /// <summary>Optional space-separated scopes; omitted from the request when empty.</summary>
     public string? Scope { get; init; }
@@ -53,8 +65,8 @@ public interface IClientCredentialsTokenService
     /// </param>
     /// <param name="cancellationToken">Bounds this caller's wait; a shared in-flight fetch continues for other waiters.</param>
     /// <exception cref="InvalidOperationException">
-    /// The token endpoint rejected the request or returned no usable token. Failures are never
-    /// cached - the next call retries.
+    /// The token endpoint rejected the request or returned no usable token, or the request's
+    /// <c>PrivateKeyJwt</c> key is unusable. Failures are never cached - the next call retries.
     /// </exception>
     Task<string> GetTokenAsync(ClientCredentialsTokenRequest request, bool forceRefresh = false, CancellationToken cancellationToken = default);
 }
@@ -66,7 +78,7 @@ public interface IClientCredentialsTokenService
 /// safety margin before the IdP's <c>expires_in</c>; failed acquisitions are evicted immediately
 /// so an IdP hiccup never poisons the cache.
 /// </summary>
-public sealed class ClientCredentialsTokenService(
+internal sealed class ClientCredentialsTokenService(
     IHttpClientFactory httpClientFactory,
     IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor,
     TimeProvider timeProvider,
@@ -75,6 +87,9 @@ public sealed class ClientCredentialsTokenService(
     private static readonly TimeSpan MaxExpiryMargin = TimeSpan.FromSeconds(60);
 
     private readonly ConcurrentDictionary<string, Lazy<Task<CachedToken>>> _cache = new();
+
+    // private_key_jwt key material per client (endpoint + client id), parsed once per configured value.
+    private readonly ClientAssertionSignerCache _signers = new();
 
     /// <inheritdoc/>
     public async Task<string> GetTokenAsync(ClientCredentialsTokenRequest request, bool forceRefresh = false, CancellationToken cancellationToken = default)
@@ -146,14 +161,41 @@ public sealed class ClientCredentialsTokenService(
 
     private async Task<CachedToken> FetchTokenAsync(ClientCredentialsTokenRequest request)
     {
-        logger.ClientCredentialsTokenRequested(request.TokenEndpoint, request.ClientId, request.Scope, request.Audience);
+        var form = new Dictionary<string, string> { ["grant_type"] = "client_credentials" };
+        string clientId;
 
-        var form = new Dictionary<string, string>
+        if (request.PrivateKeyJwt is { IsConfigured: true } privateKeyJwt)
         {
-            ["grant_type"] = "client_credentials",
-            ["client_id"] = request.ClientId,
-            ["client_secret"] = request.ClientSecret,
-        };
+            ClientAssertionSigner signer;
+            try
+            {
+                // Slot by the configured client, so a Zitadel key file (empty ClientId) and a PEM key
+                // for the same endpoint never share an entry. The key's own client id wins for Zitadel.
+                signer = _signers.GetOrLoad($"{request.TokenEndpoint}|{request.ClientId}", privateKeyJwt);
+                clientId = signer.ResolveClientId(request.ClientId, nameof(request.ClientId));
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Configuration, not a token-endpoint rejection. Like any failed acquisition it is
+                // not cached, so a fixed key is picked up on the next call.
+                logger.ClientCredentialsKeyInvalid(request.TokenEndpoint, ex.Message);
+                throw new ClientCredentialsConfigurationException($"PrivateKeyJwt is invalid: {ex.Message}", ex);
+            }
+
+            // A fresh assertion per token request (unique jti). Entra ID and Okta require the token
+            // endpoint as audience; Keycloak accepts it.
+            form["client_assertion_type"] = ClientAssertionSigner.ClientAssertionType;
+            form["client_assertion"] = signer.CreateAssertion(
+                clientId, privateKeyJwt.Audience ?? request.TokenEndpoint, timeProvider.GetUtcNow());
+        }
+        else
+        {
+            clientId = request.ClientId;
+            form["client_secret"] = request.ClientSecret;
+        }
+
+        form["client_id"] = clientId;
+        logger.ClientCredentialsTokenRequested(request.TokenEndpoint, clientId, request.Scope, request.Audience);
 
         // Scope and audience are optional; some IdPs reject empty values, so omit the fields
         // entirely when unconfigured (matching the token-exchange and refresh services).
@@ -167,13 +209,13 @@ public sealed class ClientCredentialsTokenService(
             form["audience"] = request.Audience;
         }
 
-        var httpClient = httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName);
+        var httpClient = httpClientFactory.CreateClient(PortaHttpClients.Token);
         using var content = new FormUrlEncodedContent(form);
         var httpResponse = await httpClient.PostAsync(request.TokenEndpoint, content);
 
         if (!httpResponse.IsSuccessStatusCode)
         {
-            logger.ClientCredentialsTokenFailed(request.ClientId, (int)httpResponse.StatusCode);
+            logger.ClientCredentialsTokenFailed(clientId, (int)httpResponse.StatusCode);
             var coreOptions = coreOptionsMonitor.CurrentValue;
             if (coreOptions.LogIdpErrorBodies)
             {
@@ -191,12 +233,12 @@ public sealed class ClientCredentialsTokenService(
         if (response is null || string.IsNullOrEmpty(response.AccessToken))
         {
             // Fail closed - "Authorization: Bearer " (empty) reads as anonymous to many backends.
-            logger.ClientCredentialsTokenEmpty(request.ClientId, request.TokenEndpoint);
+            logger.ClientCredentialsTokenEmpty(clientId, request.TokenEndpoint);
             throw new InvalidOperationException("Client-credentials token response contained no access token.");
         }
 
         var expiresAt = ComputeExpiry(response.ExpiresIn);
-        logger.ClientCredentialsTokenAcquired(request.ClientId, response.ExpiresIn);
+        logger.ClientCredentialsTokenAcquired(clientId, response.ExpiresIn);
         return new CachedToken(response.AccessToken, expiresAt);
     }
 
@@ -218,10 +260,13 @@ public sealed class ClientCredentialsTokenService(
 
     private static string CacheKey(ClientCredentialsTokenRequest request)
     {
-        // Hash (never store) the secret in the key so a rotated secret mints a fresh token
-        // instead of serving one issued to the old credential.
-        var secretHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.ClientSecret)));
-        return string.Join('|', request.TokenEndpoint, request.ClientId, request.Scope, request.Audience, secretHash);
+        // Hash (never store) the credential in the key so a rotated secret or key mints a fresh
+        // token instead of serving one issued to the old credential.
+        var credential = request.PrivateKeyJwt is { IsConfigured: true } key
+            ? string.Join('\0', "private_key_jwt", key.KeyFile, key.Key, key.KeyPassword, key.KeyId, key.Algorithm, key.Audience)
+            : request.ClientSecret;
+        var credentialHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(credential)));
+        return string.Join('|', request.TokenEndpoint, request.ClientId, request.Scope, request.Audience, credentialHash);
     }
 
     private sealed record CachedToken(string AccessToken, DateTimeOffset ExpiresAt);
@@ -253,4 +298,8 @@ internal static partial class ClientCredentialsTokenServiceLogging
     [LoggerMessage(EventId = 11404, Level = LogLevel.Information,
         Message = "Client-credentials token acquired for client {ClientId}, expires in {ExpiresIn}s")]
     public static partial void ClientCredentialsTokenAcquired(this ILogger logger, string clientId, int expiresIn);
+
+    [LoggerMessage(EventId = 11405, Level = LogLevel.Error,
+        Message = "Client-credentials private_key_jwt key for token endpoint {TokenEndpoint} is unusable: {Reason}")]
+    public static partial void ClientCredentialsKeyInvalid(this ILogger logger, string tokenEndpoint, string reason);
 }

@@ -23,7 +23,7 @@ namespace b17s.Porta.Auth.Sessions;
 /// - This service maintains a lightweight email→sessionIds index for admin queries
 ///   plus an optional encrypted refresh token used for IdP-side revocation.
 /// </summary>
-public sealed class SessionManagementService(
+internal sealed class SessionManagementService(
     IDistributedCache cache,
     IOptions<SessionAuthenticationConfiguration> configOptions,
     ILogger<SessionManagementService> logger,

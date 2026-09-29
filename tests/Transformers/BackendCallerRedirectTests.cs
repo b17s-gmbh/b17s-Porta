@@ -12,8 +12,8 @@ namespace b17s.Porta.Tests.Transformers;
 public sealed class BackendCallerRedirectTests
 {
     [Theory]
-    [InlineData(BackendCaller.HttpClientName)]
-    [InlineData(BackendCaller.HttpClientNameWithRetries)]
+    [InlineData(PortaHttpClients.Backend)]
+    [InlineData(PortaHttpClients.BackendWithRetries)]
     public void AddPortaCore_BackendCaller_DisablesAutoRedirect(string clientName)
     {
         var services = new ServiceCollection();

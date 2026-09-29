@@ -53,7 +53,7 @@ builder.Services.AddPortaCore(options => {
 
     // Clock skew applied when deciding whether an access token is "near expiry"
     // and should be proactively refreshed (default: 60 seconds). Used by both
-    // AccessTokenRefreshService and the ApiTokenService cache.
+    // session token refresh and the API token cache.
     options.TokenRefreshSkew = TimeSpan.FromSeconds(60);
 
     // Whether to log raw IdP error response bodies on token exchange/refresh/
@@ -226,6 +226,12 @@ The `"BackendService"` section is bound automatically by the `AddPortaCore(IConf
         "ClientId": "bff-orders",
         "ClientSecret": "...",
         "Scope": "orders.read orders.write"
+      },
+      "GraphApi": {
+        "TokenEndpoint": "https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token",
+        "ClientId": "<application id>",
+        "PrivateKeyJwt": { "KeyFile": "/run/secrets/bff-graph.pfx", "KeyPassword": "..." },
+        "Scope": "https://graph.microsoft.com/.default"
       }
     },
     "DefaultTokenExchangeAudience": "https://api.internal.example.com",
@@ -245,7 +251,7 @@ The `"BackendService"` section is bound automatically by the `AddPortaCore(IConf
 | `ApiKey` | Default fixed key used by `BackendAuthPolicies.ApiKey` when no per-backend entry matches. `Token` (the secret), `Scheme` (Authorization scheme, default `Bearer`), `HeaderName` (optional custom header, e.g. `X-Api-Key`; when set the token is sent raw and `Scheme` is ignored). |
 | `ApiKeys` | Per-backend API keys keyed by `BackendRequest.BackendName`. Case-insensitive. |
 | `AllowGlobalApiKeyFallback` | Default `false` (fail closed), mirroring `AllowGlobalBasicAuthFallback`: a named backend without an `ApiKeys` entry gets **no** credential rather than the global `ApiKey` default. |
-| `ClientCredentials` | Default OAuth client-credentials client used by `BackendAuthPolicies.ClientCredentials`. `TokenEndpoint`, `ClientId`, `ClientSecret` are all required when the policy is selected (a missing value fails the call as a 5xx-class configuration error); `Scope` and `Audience` are optional and omitted from the token request when unset. Deliberately **not** inherited from `SessionAuthentication` — the M2M identity is configured separately from the login client. Minted tokens are cached process-wide until 60s before `expires_in`; failures are never cached. |
+| `ClientCredentials` | Default OAuth client-credentials client used by `BackendAuthPolicies.ClientCredentials`. `TokenEndpoint`, `ClientId` and one credential - `ClientSecret` or `PrivateKeyJwt` (signed client assertion, e.g. an Entra ID certificate; see [private key JWT](authentication.md#private-key-jwt-private_key_jwt)) - are required when the policy is selected (a missing or unusable value fails the call as a 5xx-class configuration error); `Scope` and `Audience` are optional and omitted from the token request when unset. Deliberately **not** inherited from `SessionAuthentication` — the M2M identity is configured separately from the login client. Minted tokens are cached process-wide until 60s before `expires_in`; failures are never cached. |
 | `ClientCredentialsBackends` | Per-backend client-credentials clients keyed by `BackendRequest.BackendName`. Case-insensitive. |
 | `AllowGlobalClientCredentialsFallback` | Default `false` (fail closed): a named backend without a `ClientCredentialsBackends` entry fails the call as a configuration error rather than minting a token with the global client (whose scopes may grant more than that backend should receive). |
 | `DefaultTokenExchangeAudience` | Fallback audience for `BackendAuthPolicies.TokenExchange` when an endpoint doesn't supply one inline via `WithTokenExchange(audience)`. |
@@ -262,6 +268,24 @@ When `BackendAuthPolicies.TokenExchange` is selected without an audience source 
 - Token services: `ITokenRefreshService`, `ITokenRevocationService`, `ITokenExchangeService`, `IApiTokenService`.
 - `ISessionManagementService` for admin force-logout and back-channel logout flows.
 - `OnTokenValidated` event handler that registers the session metadata + encrypted refresh token after successful sign-in.
+
+### Customizing Porta's HttpClients - `PortaHttpClients`
+
+Porta makes its outbound calls through named `HttpClient`s from `IHttpClientFactory`. To add a proxy, a message handler or other client configuration, configure the client by its name after registering Porta:
+
+```csharp
+builder.Services.AddHttpClient(PortaHttpClients.Backend)
+    .AddHttpMessageHandler<MyOutboundHandler>();
+```
+
+| Constant | Used for |
+|----------|----------|
+| `PortaHttpClients.Backend` | Backend calls from transformers, pass-through and raw-forward endpoints |
+| `PortaHttpClients.BackendWithRetries` | Backend calls with retries enabled (`WithRetries(n)`) |
+| `PortaHttpClients.Token` | Calls to the IdP: discovery, token refresh, exchange, revocation, client credentials |
+| `PortaHttpClients.ReferenceTokenIntrospection` | RFC 7662 introspection for reference tokens |
+
+To change resilience settings, prefer the dedicated options (`PortaCore` retry settings, `SessionAuthentication.Resilience`, the `configureResilience` parameter of the reference-token registrations) over adding a second resilience handler.
 
 ### Registration Order
 
@@ -370,6 +394,7 @@ When `AddReferenceTokenAuthentication` is called, `ReferenceTokenAuthOptionsVali
 - `Authority` is missing or is not an absolute `http`/`https` URL
 - `TokenHeaderName` is empty
 - exactly one of `ClientId` / `ClientSecret` is set (introspection credentials are only sent when both are configured)
+- `PrivateKeyJwt` is configured but unusable: both `KeyFile` and `Key` are set, `ClientSecret` is set alongside it, the key cannot be read, decrypted or parsed (or is an RSA key under 2048 bits, or `Algorithm` does not fit the key), `ClientId` is missing for a non-Zitadel key, or `ClientId` differs from a Zitadel key file's `clientId`
 - `DefaultCacheDuration` is not positive, or `MaxCacheDuration` is below `DefaultCacheDuration`
 - `ValidateAudience` is `true` but both `ValidAudiences` and `ValidClientIds` are empty (every token would be rejected at request time)
 

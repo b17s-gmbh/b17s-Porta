@@ -1,4 +1,5 @@
 using b17s.Porta.Auth.Tokens;
+using b17s.Porta.Tests.Fixtures;
 
 using Microsoft.Extensions.Options;
 
@@ -103,6 +104,116 @@ public class ReferenceTokenAuthOptionsValidatorTests
         var result = Validate(options);
 
         Assert.True(result.Succeeded, string.Join("; ", result.Failures ?? []));
+    }
+
+    [Fact]
+    public void PrivateKeyJwt_ZitadelKeyFile_IsValid_WithoutClientIdOrSecret()
+    {
+        // The client_id comes from the Zitadel key file, so neither ClientId nor ClientSecret is needed.
+        using var key = TestSigningKey.Rsa();
+        var options = ValidBaseline();
+        options.PrivateKeyJwt.Key = key.ZitadelKeyFile();
+
+        var result = Validate(options);
+
+        Assert.True(result.Succeeded, string.Join("; ", result.Failures ?? []));
+    }
+
+    [Fact]
+    public void PrivateKeyJwt_PemFileWithClientId_IsValid()
+    {
+        using var key = TestSigningKey.Rsa();
+        var options = ValidBaseline();
+        options.ClientId = "okta-client";
+        options.PrivateKeyJwt.KeyFile = key.WriteTempFile(key.Pkcs8Pem);
+
+        var result = Validate(options);
+
+        Assert.True(result.Succeeded, string.Join("; ", result.Failures ?? []));
+    }
+
+    [Fact]
+    public void PrivateKeyJwt_PemKeyWithoutClientId_Fails()
+    {
+        // Only a Zitadel key file carries its own client id.
+        using var key = TestSigningKey.Rsa();
+        var options = ValidBaseline();
+        options.PrivateKeyJwt.Key = key.Pkcs8Pem;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Failures!, f => f.Contains("ReferenceTokenAuth.ClientId is required", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PrivateKeyJwt_ZitadelKeyFile_MismatchedClientId_Fails()
+    {
+        using var key = TestSigningKey.Rsa();
+        var options = ValidBaseline();
+        options.PrivateKeyJwt.Key = key.ZitadelKeyFile(clientId: "my-api@project");
+        options.ClientId = "other-client";
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Failures!, f => f.Contains("does not match the clientId", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PrivateKeyJwt_WithClientSecret_Fails()
+    {
+        using var key = TestSigningKey.Rsa();
+        var options = ValidBaseline();
+        options.PrivateKeyJwt.Key = key.ZitadelKeyFile();
+        options.ClientSecret = "secret";
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Failures!, f => f.Contains("ClientSecret must not be set", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PrivateKeyJwt_MissingFile_Fails()
+    {
+        var options = ValidBaseline();
+        options.PrivateKeyJwt.KeyFile = Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json");
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Failures!, f => f.Contains("could not be read", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void PrivateKeyJwt_ZitadelServiceAccountKey_Fails()
+    {
+        // Zitadel also issues "serviceaccount" key files; those identify a machine user, not the app.
+        using var key = TestSigningKey.Rsa();
+        var options = ValidBaseline();
+        options.PrivateKeyJwt.Key = key.ZitadelKeyFile(type: "serviceaccount");
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Failures!, f => f.Contains("\"type\": \"application\"", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("""{"type":"application","keyId":"k","clientId":"c","key":"-----BEGIN RSA PRIVATE KEY-----\ngarbage\n-----END RSA PRIVATE KEY-----"}""")]
+    [InlineData("""{"type":"application","keyId":"k","key":"x"}""")]
+    public void PrivateKeyJwt_MalformedKey_Fails(string key)
+    {
+        var options = ValidBaseline();
+        options.ClientId = "c";
+        options.PrivateKeyJwt.Key = key;
+
+        var result = Validate(options);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Failures!, f => f.Contains("ReferenceTokenAuth.PrivateKeyJwt is invalid", StringComparison.Ordinal));
     }
 
     [Theory]

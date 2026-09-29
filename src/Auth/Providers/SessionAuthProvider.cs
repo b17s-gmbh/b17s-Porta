@@ -14,7 +14,7 @@ namespace b17s.Porta.Auth.Providers;
 /// populated by ASP.NET Core's OIDC handler. Tokens live on the ticket via
 /// <c>SaveTokens = true</c>; refresh is delegated to <see cref="IAccessTokenRefreshService"/>.
 /// </summary>
-public sealed class SessionAuthProvider(
+internal sealed class SessionAuthProvider(
     IAccessTokenRefreshService accessTokenRefresh,
     ITokenRefreshService tokenRefreshService,
     IApiTokenService apiTokenService,

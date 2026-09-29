@@ -82,7 +82,7 @@ public sealed class AnonymousNoAuthProviderEndpointTests
                     // provider. This is the README "Minimal Setup (No Auth)" shape.
                     services.AddPortaCore();
                     services.AddScoped<DefaultRawForwardTransformer>();
-                    services.AddHttpClient(BackendCaller.HttpClientName)
+                    services.AddHttpClient(PortaHttpClients.Backend)
                         .ConfigurePrimaryHttpMessageHandler(() => backendHandler);
                 });
                 webHost.Configure(app =>

@@ -15,7 +15,7 @@ namespace b17s.Porta.Auth.Providers;
 /// register the <c>PortaReferenceToken</c> authentication scheme (which shares the same
 /// <see cref="ReferenceTokenAuthenticator"/>, so the token is introspected once per request).
 /// </remarks>
-public sealed class ReferenceTokenAuthProvider(ReferenceTokenAuthenticator authenticator) : IAuthenticationProvider
+internal sealed class ReferenceTokenAuthProvider(ReferenceTokenAuthenticator authenticator) : IAuthenticationProvider
 {
     /// <inheritdoc/>
     public async Task<AuthenticationContext> GetAuthContextAsync(HttpContext context, CancellationToken cancellationToken = default)

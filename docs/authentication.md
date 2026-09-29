@@ -12,7 +12,9 @@ The framework uses `IAuthenticationProvider` to expose user identity to transfor
 |----------|----------|---------------|
 | `SessionAuthProvider` | Reads the cookie auth ticket populated by the framework's OIDC handler. Default when you call `AddPortaAuthentication`. | Yes (via `IAccessTokenRefreshService`) |
 | `ReferenceTokenAuthProvider` | Reference token validation via introspection, in-pipeline only (`AddReferenceTokenAuthentication`) — resolves `AuthContext` but does **not** set `HttpContext.User`. Recommended for API-style callers. | No |
-| `JwtBearerAuthProvider` | Inbound JWT validation via OIDC discovery / JWKS (opt-in fallback) | No |
+| `JwtBearerAuthProvider` | Inbound JWT validation via OIDC discovery / JWKS (opt-in fallback, `AddPortaJwtAuthentication`) | No |
+
+The provider classes are internal. Register them through the extension methods named above; their names identify them in logs and in the `provider` telemetry tag.
 
 For opaque tokens, prefer registering them as a **scheme** rather than provider-only:
 
@@ -59,7 +61,7 @@ After `AddPortaAuthentication` registers the framework's cookie + OIDC handlers,
 - Returns `access_token`, `refresh_token`, `id_token`, `expires_at` plus claims as an `AuthenticationContext`.
 - Delegates near-expiry refresh to `IAccessTokenRefreshService`, which acquires a per-user lock, calls the IdP's token endpoint, updates the ticket via `SignInAsync`, and patches the encrypted refresh token on session metadata so `TerminateSessionAsync(..., revokeTokens: true)` always targets the current token.
 
-You don't typically construct or interact with `SessionAuthProvider` directly - it's resolved as `IAuthenticationProvider` in transformers.
+`SessionAuthProvider` is internal: `AddPortaAuthentication` registers it, and transformers resolve it as `IAuthenticationProvider`.
 
 ### ReferenceTokenAuthOptions
 
@@ -79,8 +81,49 @@ You don't typically construct or interact with `SessionAuthProvider` directly - 
 | `Authority` | - | OIDC authority URL - used to discover the introspection endpoint. |
 | `ClientId` | - | Client ID used when authenticating to the introspection endpoint. |
 | `ClientSecret` | - | Client secret used when authenticating to the introspection endpoint. |
-| `UseBasicAuthForIntrospection` | `true` | Send credentials via HTTP Basic auth. When `false`, `client_id` / `client_secret` are sent in the request body. |
+| `UseBasicAuthForIntrospection` | `true` | Send credentials via HTTP Basic auth. When `false`, `client_id` / `client_secret` are sent in the request body. Ignored with `private_key_jwt`. |
+| `PrivateKeyJwt` | - | Key material for `private_key_jwt` client authentication instead of a secret (see below). |
 | `TokenTypeHint` | `access_token` | Optional `token_type_hint` parameter (RFC 7662 §2.1). |
+
+#### Private key JWT (`private_key_jwt`)
+
+Instead of a shared secret, the client can authenticate with a short-lived JWT signed with its private key (RFC 7523 §2.2, OIDC `private_key_jwt`). Porta supports this for reference-token introspection (`ReferenceTokenAuthOptions.PrivateKeyJwt`) and for the `ClientCredentials` backend-auth policy (`BackendService:ClientCredentials:PrivateKeyJwt`, see [configuration](configuration.md#backend-service-credentials---backendservice)). Both take the same options:
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `KeyFile` | - | Path to the key material: a Zitadel key file, a PEM file, or a PKCS#12 (`.pfx`/`.p12`) file. The format is detected from the content. |
+| `Key` | - | Inline key material (Zitadel key file JSON or PEM), e.g. from a secret store or env var. Mutually exclusive with `KeyFile`. |
+| `KeyPassword` | - | Password for a PKCS#12 file or an encrypted PEM key (`ENCRYPTED PRIVATE KEY`). |
+| `KeyId` | Zitadel `keyId`, else none | The `kid` header, identifying the registered key at the IdP. |
+| `Algorithm` | `RS256` (RSA), `ES256`/`ES384`/`ES512` (EC, by curve) | RSA keys also accept `RS384`, `RS512`, `PS256`, `PS384`, `PS512`. |
+| `Audience` | introspection: the discovered issuer (falls back to `Authority`); client credentials: `TokenEndpoint` | The assertion's `aud` claim. |
+
+PEM keys may be RSA or EC, in PKCS#1, SEC1 or PKCS#8 form. If a PEM file also contains the matching `CERTIFICATE`, or the key comes from a PKCS#12 file, the certificate thumbprints are sent as the `x5t` and `x5t#S256` headers, which Entra ID uses to find the credential. RSA keys must be at least 2048 bits.
+
+For each introspection or token request Porta signs a fresh assertion: `iss` = `sub` = the client id, `aud` as above, a unique `jti`, and a 1-minute lifetime. It sends it as `client_assertion` with `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer` in the form body. No secret and no `Authorization: Basic` header are sent, and `UseBasicAuthForIntrospection` is ignored.
+
+- **Client id.** A Zitadel key file carries its own `clientId`, so `ClientId` may stay empty; if set, it must match. With a PEM or PKCS#12 key, `ClientId` is required.
+- **No secret alongside.** Configuring `ClientSecret` and `PrivateKeyJwt` together is rejected.
+- **Validation.** For introspection the key is loaded at startup, so a missing file, wrong password or broken key fails boot. For client credentials it is loaded on first use and reported as a 5xx-class configuration error.
+- **Rotation.** Loaded keys are cached per configured value. Changing any `PrivateKeyJwt` setting through an appsettings reload loads the new key. Overwriting the file at the same path does not: restart, or point `KeyFile` at a new path.
+
+```csharp
+builder.Services.AddPortaReferenceTokenScheme(options =>
+{
+    options.Authority = "https://idp.example.com";
+    options.PrivateKeyJwt.KeyFile = "/run/secrets/introspection-key.json";
+    options.ValidAudiences = ["<audience>"];
+});
+```
+
+##### Per identity provider
+
+| IdP | Register the key | Porta settings |
+|-----|------------------|----------------|
+| **Zitadel** | API application → auth method **Private Key JWT** → add a key and download the JSON key file. Only `"type": "application"` key files are supported. | `KeyFile` = the JSON file. Nothing else: client id and `kid` come from the file, and the default audience (issuer) is what Zitadel expects. Introspection only; Zitadel machine-to-machine access uses service-user keys and the JWT-bearer grant, which Porta does not implement. |
+| **Keycloak** | Client → **Credentials** → Client Authenticator **Signed JWT** → **Keys** tab → *Generate new keys* (PKCS12 archive) or import your certificate. | `KeyFile` = the `.p12`, `KeyPassword` = its password (use the same value for key and store password when generating), `ClientId` = the client id. Default audiences work. |
+| **Okta** | App → Client authentication **Public key / Private key** → add a key (generate one in the console and download the PEM, or upload your own). Note the key's `kid`. | `KeyFile` = the PEM, `KeyId` = the `kid`, `ClientId`. For **introspection**, set `Audience` to the introspection endpoint URL (e.g. `https://{domain}/oauth2/default/v1/introspect`): Okta requires `aud` to be the endpoint being called. The client-credentials default (token endpoint) already fits. |
+| **Microsoft Entra ID** | App registration → **Certificates & secrets** → upload the certificate (`.cer`/`.pem`). | Client credentials only; Entra has no introspection endpoint. `KeyFile` = a `.pfx` (with `KeyPassword`) or a PEM containing key **and** certificate, `ClientId` = the application (client) id, `TokenEndpoint` = `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`, `Scope` = e.g. `api://{backend-app-id}/.default`. |
 
 The introspection `HttpClient` uses the standard resilience pipeline (retry + circuit breaker + timeouts; attempt timeout 10 s, total request timeout 30 s by default). Override it via the optional `configureResilience` parameter:
 
@@ -372,7 +415,7 @@ Backend auth handlers apply authentication to outgoing requests to backend servi
 | `None` | No authentication | No |
 | `BasicAuth` | HTTP Basic auth with configured credentials | No |
 | `ApiKey` | Fixed API key from configuration. Default `Authorization: Bearer <token>`; the scheme is configurable (`Scheme`), or send the raw key in a custom header (`HeaderName`, e.g. `X-Api-Key`). Per-backend keys via `BackendService:ApiKeys`, fail-closed like BasicAuth. | No |
-| `ClientCredentials` | OAuth2 client-credentials grant (RFC 6749 §4.4): the BFF mints an access token for its **own** machine-to-machine identity and sends it as a Bearer credential. Configured under `BackendService:ClientCredentials` (`TokenEndpoint`, `ClientId`, `ClientSecret` required; optional `Scope`/`Audience`) — deliberately separate from `SessionAuthentication`. Tokens are cached process-wide until 60s before expiry; failures are never cached. Per-backend clients via `BackendService:ClientCredentialsBackends`, fail-closed (as a 5xx-class config error) unless `AllowGlobalClientCredentialsFallback` is set. | No |
+| `ClientCredentials` | OAuth2 client-credentials grant (RFC 6749 §4.4): the BFF mints an access token for its **own** machine-to-machine identity and sends it as a Bearer credential. Configured under `BackendService:ClientCredentials` (`TokenEndpoint`, `ClientId`, and `ClientSecret` or [`PrivateKeyJwt`](#private-key-jwt-private_key_jwt) required; optional `Scope`/`Audience`) — deliberately separate from `SessionAuthentication`. Tokens are cached process-wide until 60s before expiry; failures are never cached. Per-backend clients via `BackendService:ClientCredentialsBackends`, fail-closed (as a 5xx-class config error) unless `AllowGlobalClientCredentialsFallback` is set. | No |
 | `BearerToken` | Forward user's bearer token | Yes |
 | `TokenExchange` | Exchange user token for backend-specific token (RFC 8693) - requires an audience | Yes |
 

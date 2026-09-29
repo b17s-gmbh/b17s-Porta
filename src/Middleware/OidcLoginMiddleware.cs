@@ -11,7 +11,7 @@ namespace b17s.Porta.Middleware;
 /// State, nonce, PKCE, authorize-URL building, and the callback exchange are
 /// all owned by <c>Microsoft.AspNetCore.Authentication.OpenIdConnect</c>.
 /// </summary>
-public sealed class OidcLoginMiddleware(
+internal sealed class OidcLoginMiddleware(
     RequestDelegate next,
     IOptions<OidcLoginOptions> options,
     IReturnUrlProtector returnUrlProtector,

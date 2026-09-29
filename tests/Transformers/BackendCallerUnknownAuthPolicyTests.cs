@@ -89,7 +89,7 @@ public sealed class BackendCallerUnknownAuthPolicyTests
                     services.AddSingleton(new EchoTransformerOptions { BackendAuthPolicy = backendAuthPolicy });
                     services.AddSingleton<EchoTransformer>();
 
-                    services.AddHttpClient(BackendCaller.HttpClientName)
+                    services.AddHttpClient(PortaHttpClients.Backend)
                         .ConfigurePrimaryHttpMessageHandler(() => captureHandler);
                 });
                 webHost.Configure(app =>

@@ -12,7 +12,7 @@ namespace b17s.Porta.Auth.Tokens;
 /// <summary>
 /// Provides OAuth token exchange functionality for API-specific tokens
 /// </summary>
-public sealed class TokenExchangeService(
+internal sealed class TokenExchangeService(
     IHttpClientFactory httpClientFactory,
     IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor,
     ILogger<TokenExchangeService> logger) : ITokenExchangeService
@@ -26,7 +26,7 @@ public sealed class TokenExchangeService(
     {
         logger.TokenExchangeStarted(apiConfig.ApiPath, apiConfig.ApiScopes, apiConfig.ApiAudience);
 
-        var httpClient = httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName);
+        var httpClient = httpClientFactory.CreateClient(PortaHttpClients.Token);
         var scope = apiConfig.ApiScopes;
 
         // Get token endpoint - use API-specific endpoint if configured, otherwise use discovery

@@ -141,7 +141,7 @@ public static class PortaServiceExtensions
         // Register HttpClient without retries (default). Timeout binds from the composed
         // IOptions<PortaCoreOptions> pipeline (read at client-creation time) rather than an
         // eager snapshot, so consumer Configure/PostConfigure<PortaCoreOptions> is honored.
-        services.AddHttpClient(BackendCaller.HttpClientName, (sp, client) =>
+        services.AddHttpClient(PortaHttpClients.Backend, (sp, client) =>
         {
             var coreOptions = sp.GetRequiredService<IOptions<PortaCoreOptions>>().Value;
             client.Timeout = coreOptions.DefaultTimeout;
@@ -164,7 +164,7 @@ public static class PortaServiceExtensions
         // owns all timeouts via AttemptTimeout/TotalRequestTimeout, which ConfigureBackendResilience
         // binds from the composed IOptions<PortaCoreOptions> pipeline (so consumer
         // Configure/PostConfigure is honored).
-        services.AddHttpClient(BackendCaller.HttpClientNameWithRetries, client =>
+        services.AddHttpClient(PortaHttpClients.BackendWithRetries, client =>
         {
             client.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
@@ -267,7 +267,7 @@ public static class PortaServiceExtensions
 
     /// <summary>
     /// Configures the standard resilience pipeline on the retrying backend
-    /// <see cref="HttpClient"/> (<see cref="BackendCaller.HttpClientNameWithRetries"/>).
+    /// <see cref="HttpClient"/> (<see cref="PortaHttpClients.BackendWithRetries"/>).
     /// </summary>
     /// <remarks>
     /// <c>AddStandardResilienceHandler</c> bakes a single <c>MaxRetryAttempts</c> into the pipeline,

@@ -113,7 +113,7 @@ public interface IContentSerializer
 /// <summary>
 /// Default implementation of content serialization supporting JSON and XML.
 /// </summary>
-public sealed class ContentSerializer : IContentSerializer
+internal sealed class ContentSerializer : IContentSerializer
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

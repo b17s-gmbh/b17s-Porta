@@ -49,9 +49,22 @@ public sealed class ReferenceTokenAuthOptions
 
     /// <summary>
     /// Whether to use HTTP Basic authentication for introspection (default: true)
-    /// If false, client_id and client_secret will be sent in the request body
+    /// If false, client_id and client_secret will be sent in the request body.
+    /// Ignored when <see cref="PrivateKeyJwt"/> is configured.
     /// </summary>
     public bool UseBasicAuthForIntrospection { get; set; } = true;
+
+    /// <summary>
+    /// <c>private_key_jwt</c> client authentication for the introspection call (RFC 7523 §2.2).
+    /// When a key is configured, a short-lived signed client assertion is sent as
+    /// <c>client_assertion</c> in the form body instead of a client secret.
+    /// <para>
+    /// Mutually exclusive with <see cref="ClientSecret"/>. <see cref="ClientId"/> is required unless the key
+    /// is a Zitadel key file (which carries its own client id; <see cref="ClientId"/> must then be empty or
+    /// match). The assertion audience defaults to the issuer from discovery.
+    /// </para>
+    /// </summary>
+    public PrivateKeyJwtOptions PrivateKeyJwt { get; set; } = new();
 
     /// <summary>
     /// Token type hint for introspection (e.g., "access_token", "refresh_token")

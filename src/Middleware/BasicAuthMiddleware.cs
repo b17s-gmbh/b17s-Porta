@@ -13,7 +13,7 @@ namespace b17s.Porta.Middleware;
 /// Middleware that handles Basic Authentication for specific endpoints.
 /// Validates credentials against configured values.
 /// </summary>
-public sealed class BasicAuthMiddleware(RequestDelegate next, ILogger<BasicAuthMiddleware> logger)
+internal sealed class BasicAuthMiddleware(RequestDelegate next, ILogger<BasicAuthMiddleware> logger)
 {
     private const string AuthorizationHeaderName = "Authorization";
     private const string BasicScheme = "Basic";
@@ -191,7 +191,7 @@ internal static partial class BasicAuthMiddlewareLogging
 public static class BasicAuthMiddlewareExtensions
 {
     /// <summary>
-    /// Adds the <see cref="BasicAuthMiddleware"/> to the request pipeline, enforcing Basic
+    /// Adds Porta's Basic authentication middleware to the request pipeline, enforcing Basic
     /// authentication on endpoints marked with <see cref="RequireBasicAuthAttribute"/>.
     /// </summary>
     /// <param name="app">The application builder.</param>

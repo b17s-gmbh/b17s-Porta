@@ -13,7 +13,7 @@ namespace b17s.Porta.Transformers;
 /// startup; <see cref="IsTrusted"/> is additionally consulted at request time by the
 /// backend caller before a user-derived token is attached to an outgoing request.
 /// </summary>
-public interface ITrustedHostValidator
+internal interface ITrustedHostValidator
 {
     /// <summary>
     /// Validates that a URL is in the trusted hosts list.
@@ -34,7 +34,7 @@ public interface ITrustedHostValidator
 /// Default implementation of trusted host validation.
 /// Compiles patterns at construction time for efficient matching.
 /// </summary>
-public sealed class TrustedHostValidator : ITrustedHostValidator
+internal sealed class TrustedHostValidator : ITrustedHostValidator
 {
     private readonly List<Regex> _trustedPatterns = [];
     private readonly List<string> _trustedHosts = [];

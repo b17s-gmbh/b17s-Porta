@@ -4,9 +4,11 @@ using System.Text.Json;
 
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Tests.Fixtures;
 
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace b17s.Porta.Tests.Auth.Tokens;
 
@@ -54,6 +56,151 @@ public sealed class ClientCredentialsTokenServiceTests
         Assert.Equal("s3cret", form["client_secret"]);
         Assert.Equal("orders.read", form["scope"]);
         Assert.Equal("orders-api", form["audience"]);
+    }
+
+    [Fact]
+    public async Task PrivateKeyJwt_SendsClientAssertion_InsteadOfSecret()
+    {
+        // Entra ID certificate credential: client_id + signed assertion, aud = token endpoint,
+        // certificate thumbprint in the header, and no secret on the wire.
+        using var key = TestSigningKey.Rsa();
+        var endpoint = new FakeTokenEndpoint();
+        var time = new FakeTimeProvider();
+        var service = Service(endpoint, time);
+
+        await service.GetTokenAsync(
+            Request(clientSecret: "") with { PrivateKeyJwt = new PrivateKeyJwtOptions { Key = key.PemWithCertificate } },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var form = Assert.Single(endpoint.ReceivedForms);
+        Assert.Equal("bff-m2m", form["client_id"]);
+        Assert.False(form.ContainsKey("client_secret"));
+        Assert.Equal("urn:ietf:params:oauth:client-assertion-type:jwt-bearer", form["client_assertion_type"]);
+
+        var jwt = new JsonWebToken(form["client_assertion"]);
+        Assert.Equal("bff-m2m", jwt.Issuer);
+        Assert.Equal(["https://idp.test/connect/token"], jwt.Audiences);
+        Assert.Equal(key.X5t, jwt.GetHeaderValue<string>("x5t"));
+        // Assertion times come from the injected TimeProvider.
+        Assert.Equal(time.GetUtcNow().ToUnixTimeSeconds(), new DateTimeOffset(jwt.IssuedAt).ToUnixTimeSeconds());
+    }
+
+    [Fact]
+    public async Task PrivateKeyJwt_AudienceOverride_IsUsed()
+    {
+        using var key = TestSigningKey.Rsa();
+        var endpoint = new FakeTokenEndpoint();
+        var service = Service(endpoint, new FakeTimeProvider());
+
+        await service.GetTokenAsync(
+            Request() with { PrivateKeyJwt = new PrivateKeyJwtOptions { Key = key.Pkcs8Pem, Audience = "https://idp.test" } },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var jwt = new JsonWebToken(Assert.Single(endpoint.ReceivedForms)["client_assertion"]);
+        Assert.Equal(["https://idp.test"], jwt.Audiences);
+    }
+
+    [Fact]
+    public async Task PrivateKeyJwt_DifferentKeys_DoNotShareCachedToken()
+    {
+        // The credential is part of the cache identity, so rotating the key mints a fresh token.
+        using var keyA = TestSigningKey.Rsa();
+        using var keyB = TestSigningKey.Rsa();
+        var endpoint = new FakeTokenEndpoint(expiresIn: 3600);
+        var service = Service(endpoint, new FakeTimeProvider());
+
+        var first = await service.GetTokenAsync(
+            Request() with { PrivateKeyJwt = new PrivateKeyJwtOptions { Key = keyA.Pkcs8Pem } },
+            cancellationToken: TestContext.Current.CancellationToken);
+        var second = await service.GetTokenAsync(
+            Request() with { PrivateKeyJwt = new PrivateKeyJwtOptions { Key = keyB.Pkcs8Pem } },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(first, second);
+        Assert.Equal(2, endpoint.ReceivedForms.Count);
+    }
+
+    [Fact]
+    public async Task PrivateKeyJwt_UnloadableKey_ThrowsConfigurationException_WithoutCallingIdp()
+    {
+        // A distinct type, so callers can tell misconfiguration from a token-endpoint rejection.
+        var endpoint = new FakeTokenEndpoint();
+        var service = Service(endpoint, new FakeTimeProvider());
+
+        var ex = await Assert.ThrowsAsync<ClientCredentialsConfigurationException>(() => service.GetTokenAsync(
+            Request() with { PrivateKeyJwt = new PrivateKeyJwtOptions { Key = "not a key" } },
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.StartsWith("PrivateKeyJwt is invalid", ex.Message);
+        Assert.Empty(endpoint.ReceivedForms);
+    }
+
+    [Fact]
+    public async Task PrivateKeyJwt_ZitadelKeyFile_EmptyClientId_ResolvesClientIdFromKeyFile()
+    {
+        // Direct callers of the public service (not just the built-in handler) get the Zitadel
+        // key file's client id in both the form and the assertion's iss/sub.
+        using var key = TestSigningKey.Rsa();
+        var endpoint = new FakeTokenEndpoint();
+        var service = Service(endpoint, new FakeTimeProvider());
+
+        await service.GetTokenAsync(
+            Request(clientSecret: "") with
+            {
+                ClientId = "",
+                PrivateKeyJwt = new PrivateKeyJwtOptions { Key = key.ZitadelKeyFile(clientId: "app@project") },
+            },
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        var form = Assert.Single(endpoint.ReceivedForms);
+        Assert.Equal("app@project", form["client_id"]);
+        // Parsed rather than validated: assertion times come from the fake clock, which is in the past.
+        var jwt = new JsonWebToken(form["client_assertion"]);
+        Assert.Equal("app@project", jwt.Issuer);
+        Assert.Equal("app@project", jwt.Subject);
+    }
+
+    [Theory]
+    [InlineData("zitadel", "other-client", "does not match")]
+    [InlineData("pem", "", "ClientId is required")]
+    public async Task PrivateKeyJwt_UnresolvableClientId_ThrowsConfigurationException(string keyKind, string clientId, string expected)
+    {
+        using var key = TestSigningKey.Rsa();
+        var endpoint = new FakeTokenEndpoint();
+        var service = Service(endpoint, new FakeTimeProvider());
+        var keyMaterial = keyKind == "zitadel" ? key.ZitadelKeyFile(clientId: "app@project") : key.Pkcs8Pem;
+
+        var ex = await Assert.ThrowsAsync<ClientCredentialsConfigurationException>(() => service.GetTokenAsync(
+            Request(clientSecret: "") with { ClientId = clientId, PrivateKeyJwt = new PrivateKeyJwtOptions { Key = keyMaterial } },
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains(expected, ex.Message);
+        Assert.Empty(endpoint.ReceivedForms);
+    }
+
+    [Fact]
+    public async Task PrivateKeyJwt_KeyFailure_IsNotCached_FixedKeyWorksOnNextCall()
+    {
+        using var key = TestSigningKey.Rsa();
+        var endpoint = new FakeTokenEndpoint();
+        var service = Service(endpoint, new FakeTimeProvider());
+        var path = Path.Combine(Path.GetTempPath(), $"porta-cc-key-{Guid.NewGuid():N}.pem");
+        var request = Request(clientSecret: "") with { PrivateKeyJwt = new PrivateKeyJwtOptions { KeyFile = path } };
+
+        try
+        {
+            await Assert.ThrowsAsync<ClientCredentialsConfigurationException>(
+                () => service.GetTokenAsync(request, cancellationToken: TestContext.Current.CancellationToken));
+
+            File.WriteAllText(path, key.Pkcs8Pem);
+            var token = await service.GetTokenAsync(request, cancellationToken: TestContext.Current.CancellationToken);
+
+            Assert.Equal("token-1", token);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]

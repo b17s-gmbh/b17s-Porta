@@ -10,7 +10,7 @@ namespace b17s.Porta.Auth.Tokens;
 /// <summary>
 /// Parameters for validating a JWT issued by the OIDC authority.
 /// </summary>
-public record JwtValidationParameters
+internal record JwtValidationParameters
 {
     /// <summary>
     /// The OIDC authority (issuer) URL. Used to fetch discovery metadata and signing keys, and as
@@ -63,7 +63,7 @@ public record JwtValidationParameters
 /// Result of a JWT validation attempt. Either succeeds with the parsed token,
 /// or fails with a categorized reason for diagnostics and HTTP-status mapping.
 /// </summary>
-public enum JwtValidationFailureReason
+internal enum JwtValidationFailureReason
 {
     /// <summary>No failure; the token validated successfully.</summary>
     None,
@@ -103,7 +103,7 @@ public enum JwtValidationFailureReason
 /// <param name="Token">The parsed token on success; <see langword="null"/> on failure.</param>
 /// <param name="Reason">The failure category, or <see cref="JwtValidationFailureReason.None"/> on success.</param>
 /// <param name="ErrorMessage">An optional diagnostic message describing the failure; <see langword="null"/> on success.</param>
-public readonly record struct JwtValidationResult(
+internal readonly record struct JwtValidationResult(
     JsonWebToken? Token,
     JwtValidationFailureReason Reason,
     string? ErrorMessage)

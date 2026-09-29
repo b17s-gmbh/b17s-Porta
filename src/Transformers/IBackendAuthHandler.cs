@@ -122,7 +122,7 @@ public interface IBackendAuthHandlerRegistry
 /// <summary>
 /// Default implementation of the backend auth handler registry.
 /// </summary>
-public sealed class BackendAuthHandlerRegistry : IBackendAuthHandlerRegistry
+internal sealed class BackendAuthHandlerRegistry : IBackendAuthHandlerRegistry
 {
     private readonly Dictionary<string, IBackendAuthHandler> _handlers = new(StringComparer.OrdinalIgnoreCase);
 

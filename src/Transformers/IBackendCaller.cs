@@ -598,7 +598,7 @@ public record BackendRequest
     /// <c>HttpClient.Timeout</c> wraps the entire send including retries. A value of 5s does not
     /// grant 3×5s for three attempts; it caps the combined duration at 5s. Per-attempt and total
     /// budgets for the retrying client are otherwise governed by the standard resilience handler
-    /// (see <c>AddPortaCore</c>'s <c>HttpClientNameWithRetries</c> registration).
+    /// (see <see cref="b17s.Porta.Extensions.PortaHttpClients.BackendWithRetries"/>, registered by <c>AddPortaCore</c>).
     /// </remarks>
     public TimeSpan? Timeout { get; init; }
 

@@ -237,7 +237,7 @@ public sealed class ApiKeyAuthHandler(
 /// client lives under <see cref="BackendServiceOptions.ClientCredentials"/> (global default) /
 /// <see cref="BackendServiceOptions.ClientCredentialsBackends"/> (per-backend, keyed by
 /// <see cref="BackendRequest.BackendName"/>), each requiring <c>TokenEndpoint</c>, <c>ClientId</c>
-/// and <c>ClientSecret</c>, with optional <c>Scope</c> / <c>Audience</c>. A named backend without
+/// and <c>ClientSecret</c> or <c>PrivateKeyJwt</c>, with optional <c>Scope</c> / <c>Audience</c>. A named backend without
 /// its own entry fails closed as a configuration error unless
 /// <see cref="BackendServiceOptions.AllowGlobalClientCredentialsFallback"/> is set. Tokens are
 /// cached process-wide by <see cref="IClientCredentialsTokenService"/> until shortly before expiry;
@@ -257,35 +257,48 @@ public sealed class ClientCredentialsAuthHandler(
     public async Task ApplyAuthAsync(HttpRequestMessage request, BackendAuthContext context)
     {
         var backendName = context.BackendRequest.BackendName;
-        var config = ResolveConfiguration(backendName);
+        var (config, configPath) = ResolveConfiguration(backendName);
+        var usePrivateKeyJwt = config.PrivateKeyJwt.IsConfigured;
 
-        // ForceFreshCredential is set by BackendCaller's mint-fresh-on-401 retry: the cached
-        // token was rejected by the backend, so bypass the cache and mint a fresh one.
-        var token = await tokenService.GetTokenAsync(
-            new ClientCredentialsTokenRequest
-            {
-                TokenEndpoint = config.TokenEndpoint,
-                ClientId = config.ClientId,
-                ClientSecret = config.ClientSecret,
-                Scope = config.Scope,
-                Audience = config.Audience,
-            },
-            context.ForceFreshCredential,
-            context.CancellationToken);
+        string token;
+        try
+        {
+            // ForceFreshCredential is set by BackendCaller's mint-fresh-on-401 retry: the cached
+            // token was rejected by the backend, so bypass the cache and mint a fresh one.
+            token = await tokenService.GetTokenAsync(
+                new ClientCredentialsTokenRequest
+                {
+                    TokenEndpoint = config.TokenEndpoint,
+                    ClientId = config.ClientId,
+                    ClientSecret = usePrivateKeyJwt ? string.Empty : config.ClientSecret,
+                    PrivateKeyJwt = usePrivateKeyJwt ? config.PrivateKeyJwt : null,
+                    Scope = config.Scope,
+                    Audience = config.Audience,
+                },
+                context.ForceFreshCredential,
+                context.CancellationToken);
+        }
+        catch (ClientCredentialsConfigurationException ex)
+        {
+            // An unusable key is an operator problem (5xx-class), not a credential rejection.
+            throw new BackendAuthConfigurationException($"{configPath}: {ex.Message}");
+        }
 
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         logger.LogDebug(
-            "Applied client-credentials auth for backend '{Backend}' (client {ClientId})",
-            backendName ?? "<default>", config.ClientId);
+            "Applied client-credentials auth for backend '{Backend}' ({ConfigPath})",
+            backendName ?? "<default>", configPath);
     }
 
-    private ClientCredentialsOptions ResolveConfiguration(string? backendName)
+    private (ClientCredentialsOptions Config, string ConfigPath) ResolveConfiguration(string? backendName)
     {
         // Per-backend entries always win when present.
         if (!string.IsNullOrEmpty(backendName)
             && _options.ClientCredentialsBackends.TryGetValue(backendName, out var perBackend))
         {
-            return Validate(perBackend, $"BackendService:ClientCredentialsBackends:{backendName}");
+            var perBackendPath = $"BackendService:ClientCredentialsBackends:{backendName}";
+            Validate(perBackend, perBackendPath);
+            return (perBackend, perBackendPath);
         }
 
         // A request that names a backend with no per-backend entry must not silently mint a token
@@ -300,15 +313,22 @@ public sealed class ClientCredentialsAuthHandler(
                 "BackendService:AllowGlobalClientCredentialsFallback to true to share the global default.");
         }
 
-        return Validate(_options.ClientCredentials, "BackendService:ClientCredentials");
+        const string globalPath = "BackendService:ClientCredentials";
+        Validate(_options.ClientCredentials, globalPath);
+        return (_options.ClientCredentials, globalPath);
     }
 
-    private static ClientCredentialsOptions Validate(ClientCredentialsOptions config, string configPath)
+    // Checks the configuration's shape only. The private_key_jwt key itself is loaded (and a Zitadel
+    // key file's client id resolved) by the token service, whose failures ApplyAuthAsync translates.
+    private static void Validate(ClientCredentialsOptions config, string configPath)
     {
+        var usePrivateKeyJwt = config.PrivateKeyJwt.IsConfigured;
+
         var missing = new List<string>(3);
         if (string.IsNullOrEmpty(config.TokenEndpoint)) missing.Add(nameof(config.TokenEndpoint));
-        if (string.IsNullOrEmpty(config.ClientId)) missing.Add(nameof(config.ClientId));
-        if (string.IsNullOrEmpty(config.ClientSecret)) missing.Add(nameof(config.ClientSecret));
+        // With private_key_jwt the client id may come from a Zitadel key file.
+        if (!usePrivateKeyJwt && string.IsNullOrEmpty(config.ClientId)) missing.Add(nameof(config.ClientId));
+        if (!usePrivateKeyJwt && string.IsNullOrEmpty(config.ClientSecret)) missing.Add($"{nameof(config.ClientSecret)} or {nameof(config.PrivateKeyJwt)}");
 
         if (missing.Count > 0)
         {
@@ -317,7 +337,11 @@ public sealed class ClientCredentialsAuthHandler(
                 $"[{string.Join(", ", missing)}] not configured.");
         }
 
-        return config;
+        if (usePrivateKeyJwt && !string.IsNullOrEmpty(config.ClientSecret))
+        {
+            throw new BackendAuthConfigurationException(
+                $"{configPath} configures both ClientSecret and PrivateKeyJwt; configure exactly one.");
+        }
     }
 }
 
@@ -334,7 +358,7 @@ public sealed class ClientCredentialsAuthHandler(
 /// </list>
 /// The handler requires <see cref="IApiTokenService"/> to be registered - this happens automatically
 /// when <c>AddPortaAuthentication()</c> or <c>AddPortaOidcAuth()</c> is called. Without it, the handler
-/// throws and <see cref="BackendCaller"/> converts the failure into a 401 backend-auth error.
+/// throws and the backend caller converts the failure into a 401 backend-auth error.
 /// <para>
 /// The underlying <see cref="ITokenExchangeService"/> needs the IdP token endpoint plus client
 /// credentials. The handler resolves the token endpoint from the OIDC discovery document at
@@ -450,7 +474,7 @@ public sealed class TokenExchangeAuthHandler(
 /// Thrown by a backend auth handler when it cannot apply authentication because of a server-side
 /// configuration or dependency problem (e.g. token exchange selected with no audience configured, or
 /// <c>IApiTokenService</c> not registered) - as opposed to a genuine rejection of the user's
-/// credentials. <see cref="BackendCaller"/> maps this to <see cref="BackendErrorType.ConfigurationError"/>
+/// credentials. The backend caller maps this to <see cref="BackendErrorType.ConfigurationError"/>
 /// (a 5xx-class result) so operators aren't misled into chasing a user-auth failure.
 /// Derives from <see cref="InvalidOperationException"/> for backwards compatibility with callers that
 /// already catch that type.

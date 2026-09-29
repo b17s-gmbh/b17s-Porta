@@ -44,10 +44,33 @@ internal sealed class ReferenceTokenAuthOptionsValidator : IValidateOptions<Refe
             errors.Add("ReferenceTokenAuth.TokenHeaderName is required.");
         }
 
+        if (options.PrivateKeyJwt.IsConfigured)
+        {
+            // private_key_jwt replaces the shared secret; sending both would be ambiguous and
+            // leave a secret configured that is never used.
+            if (!string.IsNullOrEmpty(options.ClientSecret))
+            {
+                errors.Add(
+                    "ReferenceTokenAuth.ClientSecret must not be set together with PrivateKeyJwt. " +
+                    "Remove the secret.");
+            }
+
+            // Load the key now so a missing file, wrong password or broken PEM fails at boot
+            // rather than 401-ing every request at introspection time.
+            try
+            {
+                ClientAssertionSigner.Load(options.PrivateKeyJwt)
+                    .ResolveClientId(options.ClientId, "ReferenceTokenAuth.ClientId");
+            }
+            catch (InvalidOperationException ex)
+            {
+                errors.Add($"ReferenceTokenAuth.PrivateKeyJwt is invalid: {ex.Message}");
+            }
+        }
         // Introspection client credentials are optional (an open introspection endpoint
         // needs neither), but ReferenceTokenService only attaches them when BOTH are
         // set - configuring exactly one is silently ignored.
-        if (string.IsNullOrEmpty(options.ClientId) != string.IsNullOrEmpty(options.ClientSecret))
+        else if (string.IsNullOrEmpty(options.ClientId) != string.IsNullOrEmpty(options.ClientSecret))
         {
             errors.Add(
                 "ReferenceTokenAuth.ClientId and ClientSecret must be configured together. " +
