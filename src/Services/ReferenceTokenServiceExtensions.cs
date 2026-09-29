@@ -1,4 +1,5 @@
 using b17s.Porta.Auth.Tokens;
+using b17s.Porta.Extensions;
 
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -55,7 +56,7 @@ public static class ReferenceTokenServiceExtensions
         // AddStandardResilienceHandler resets HttpClient.Timeout to infinite and owns
         // the effective timeouts via AttemptTimeout/TotalRequestTimeout below.
         services
-            .AddHttpClient(ReferenceTokenService.HttpClientName, client =>
+            .AddHttpClient(PortaHttpClients.ReferenceTokenIntrospection, client =>
             {
                 client.DefaultRequestHeaders.Accept.Add(
                     new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));

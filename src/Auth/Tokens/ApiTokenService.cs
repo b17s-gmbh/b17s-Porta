@@ -13,7 +13,7 @@ namespace b17s.Porta.Auth.Tokens;
 /// Token storage is handled by ITokenStorage which should be backed by distributed storage (e.g., Redis-backed session) for HA.
 /// Supports both provider-agnostic usage (with explicit options) and OIDC-configured usage.
 /// </summary>
-public sealed class ApiTokenService(
+internal sealed class ApiTokenService(
     ITokenExchangeService tokenExchangeService,
     ITokenRefreshService tokenRefreshService,
     ITokenStorage tokenStorage,

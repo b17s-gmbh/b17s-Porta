@@ -16,7 +16,7 @@ namespace b17s.Porta.Auth.Providers;
 /// "Reference Tokens vs JWT" section of the README. Use this provider when your environment issues
 /// JWTs and reference-token introspection is not available.
 /// </remarks>
-public sealed class JwtBearerAuthProvider(ILogger<JwtBearerAuthProvider> logger) : IAuthenticationProvider
+internal sealed class JwtBearerAuthProvider(ILogger<JwtBearerAuthProvider> logger) : IAuthenticationProvider
 {
     /// <inheritdoc/>
     public async Task<AuthenticationContext> GetAuthContextAsync(HttpContext context, CancellationToken cancellationToken = default)

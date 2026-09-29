@@ -28,7 +28,7 @@ namespace b17s.Porta.Middleware;
 /// This is the one exception to the "no JWT validation" rule, as back-channel logout
 /// requires validating the logout_token signature to prevent malicious logout requests.
 /// </remarks>
-public sealed class OidcBackChannelLogoutMiddleware(
+internal sealed class OidcBackChannelLogoutMiddleware(
     RequestDelegate next,
     IOptions<OidcBackChannelLogoutOptions> options,
     ILogger<OidcBackChannelLogoutMiddleware> logger,

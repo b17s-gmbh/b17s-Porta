@@ -8,7 +8,7 @@ namespace b17s.Porta.Middleware;
 /// login endpoint. The wrapped value is opaque to callers - they cannot pre-set
 /// arbitrary post-login destinations without a server-issued token.
 /// </summary>
-public interface IReturnUrlProtector
+internal interface IReturnUrlProtector
 {
     /// <summary>
     /// Wraps a return URL into a signed, time-limited opaque token suitable for use as the

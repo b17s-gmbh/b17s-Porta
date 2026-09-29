@@ -144,7 +144,7 @@ public sealed class RawForwardOptionalAuthTests
                     services.AddPortaCore(options => options.TrustedHosts = ["https://backend.test"]);
                     services.AddSingleton<IAuthenticationProvider>(new StubAuthProvider(authenticated));
                     services.AddSingleton(transformer);
-                    services.AddHttpClient(BackendCaller.HttpClientName)
+                    services.AddHttpClient(PortaHttpClients.Backend)
                         .ConfigurePrimaryHttpMessageHandler(() => captureHandler);
                 });
                 webHost.Configure(app =>

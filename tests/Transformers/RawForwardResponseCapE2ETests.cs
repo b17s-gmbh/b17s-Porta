@@ -84,7 +84,7 @@ public sealed class RawForwardResponseCapE2ETests
                     services.AddSingleton<PassThroughRawTransformer>();
 
                     // Point the BFF's outbound backend client at the fake backend handler.
-                    services.AddHttpClient(BackendCaller.HttpClientName)
+                    services.AddHttpClient(PortaHttpClients.Backend)
                         .ConfigurePrimaryHttpMessageHandler(() => backendHandler);
                 });
                 webHost.Configure(app =>

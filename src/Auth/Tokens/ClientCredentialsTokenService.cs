@@ -78,7 +78,7 @@ public interface IClientCredentialsTokenService
 /// safety margin before the IdP's <c>expires_in</c>; failed acquisitions are evicted immediately
 /// so an IdP hiccup never poisons the cache.
 /// </summary>
-public sealed class ClientCredentialsTokenService(
+internal sealed class ClientCredentialsTokenService(
     IHttpClientFactory httpClientFactory,
     IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor,
     TimeProvider timeProvider,
@@ -209,7 +209,7 @@ public sealed class ClientCredentialsTokenService(
             form["audience"] = request.Audience;
         }
 
-        var httpClient = httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName);
+        var httpClient = httpClientFactory.CreateClient(PortaHttpClients.Token);
         using var content = new FormUrlEncodedContent(form);
         var httpResponse = await httpClient.PostAsync(request.TokenEndpoint, content);
 

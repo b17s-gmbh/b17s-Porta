@@ -14,19 +14,13 @@ namespace b17s.Porta.Auth.Tokens;
 /// Provides token refresh functionality for maintaining authentication state.
 /// Supports both provider-agnostic usage (with explicit options) and OIDC-configured usage.
 /// </summary>
-public sealed class TokenRefreshService(
+internal sealed class TokenRefreshService(
     IHttpClientFactory httpClientFactory,
     IDiscoveryService discoveryService,
     IOptions<SessionAuthenticationConfiguration> configOptions,
     IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor,
     ILogger<TokenRefreshService> logger) : ITokenRefreshService
 {
-    /// <summary>
-    /// The name of the named <see cref="HttpClient"/> (registered via <see cref="IHttpClientFactory"/>)
-    /// used for token-endpoint calls. Carries Porta's configured timeout and resilience pipeline.
-    /// </summary>
-    public const string HttpClientName = AuthenticationServiceExtensions.TokenHttpClientName;
-
     private readonly SessionAuthenticationConfiguration config = configOptions.Value;
 
     /// <summary>
@@ -49,7 +43,7 @@ public sealed class TokenRefreshService(
 
         try
         {
-            var httpClient = httpClientFactory.CreateClient(HttpClientName);
+            var httpClient = httpClientFactory.CreateClient(PortaHttpClients.Token);
 
             var payload = new Dictionary<string, string>
             {

@@ -14,7 +14,7 @@ namespace b17s.Porta.Auth.Tokens;
 /// Implements OAuth2 token revocation (RFC 7009).
 /// Supports both provider-agnostic usage (with explicit options) and OIDC-configured usage.
 /// </summary>
-public sealed class TokenRevocationService(
+internal sealed class TokenRevocationService(
     IHttpClientFactory httpClientFactory,
     IDiscoveryService discoveryService,
     IOptions<SessionAuthenticationConfiguration> configOptions,
@@ -40,7 +40,7 @@ public sealed class TokenRevocationService(
 
         try
         {
-            var httpClient = httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName);
+            var httpClient = httpClientFactory.CreateClient(PortaHttpClients.Token);
             var request = new HttpRequestMessage(HttpMethod.Post, options.RevocationEndpoint);
 
             var payload = new Dictionary<string, string> { { "token", token } };

@@ -187,7 +187,7 @@ public sealed class RawForwardRequestBodyAndHeadersTests
 
                     // Intercept the BackendCaller's outbound requests so we can inspect the
                     // forwarded content headers and body without a real backend server.
-                    services.AddHttpClient(BackendCaller.HttpClientName)
+                    services.AddHttpClient(PortaHttpClients.Backend)
                         .ConfigurePrimaryHttpMessageHandler(() => captureHandler);
                 });
                 webHost.Configure(app =>

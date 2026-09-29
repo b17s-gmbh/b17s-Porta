@@ -56,8 +56,8 @@ public class CompositeRegistrationIdempotencyTests
         // A duplicated registration accumulates the configure action on the named
         // HttpClientFactoryOptions, doubling the Accept header (and nesting a second
         // resilience handler on the retry client via the same mechanism).
-        var plain = factory.CreateClient(BackendCaller.HttpClientName);
-        var retrying = factory.CreateClient(BackendCaller.HttpClientNameWithRetries);
+        var plain = factory.CreateClient(PortaHttpClients.Backend);
+        var retrying = factory.CreateClient(PortaHttpClients.BackendWithRetries);
         Assert.Single(plain.DefaultRequestHeaders.Accept);
         Assert.Single(retrying.DefaultRequestHeaders.Accept);
     }
@@ -130,7 +130,7 @@ public class CompositeRegistrationIdempotencyTests
 
         var sp = services.BuildServiceProvider();
         var client = sp.GetRequiredService<IHttpClientFactory>()
-            .CreateClient(AuthenticationServiceExtensions.TokenHttpClientName);
+            .CreateClient(PortaHttpClients.Token);
 
         Assert.Single(client.DefaultRequestHeaders.Accept);
     }
@@ -226,7 +226,7 @@ public class CompositeRegistrationIdempotencyTests
 
         var sp = services.BuildServiceProvider();
         var client = sp.GetRequiredService<IHttpClientFactory>()
-            .CreateClient(ReferenceTokenService.HttpClientName);
+            .CreateClient(PortaHttpClients.ReferenceTokenIntrospection);
         Assert.Single(client.DefaultRequestHeaders.Accept);
 
         var options = sp.GetRequiredService<IOptions<ReferenceTokenAuthOptions>>().Value;
@@ -255,7 +255,7 @@ public class CompositeRegistrationIdempotencyTests
 
         var resilience = services.BuildServiceProvider()
             .GetRequiredService<IOptionsMonitor<HttpStandardResilienceOptions>>()
-            .Get(ReferenceTokenService.HttpClientName + "-standard");
+            .Get(PortaHttpClients.ReferenceTokenIntrospection + "-standard");
 
         Assert.Equal(TimeSpan.FromSeconds(3), resilience.AttemptTimeout.Timeout);
     }
@@ -281,7 +281,7 @@ public class CompositeRegistrationIdempotencyTests
 
         var client = services.BuildServiceProvider()
             .GetRequiredService<IHttpClientFactory>()
-            .CreateClient(ReferenceTokenService.HttpClientName);
+            .CreateClient(PortaHttpClients.ReferenceTokenIntrospection);
 
         Assert.Single(client.DefaultRequestHeaders.Accept);
     }

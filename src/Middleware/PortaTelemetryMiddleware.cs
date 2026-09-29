@@ -23,7 +23,7 @@ namespace b17s.Porta.Middleware;
 /// from the resolved endpoint after the pipeline runs.
 /// </para>
 /// </summary>
-public sealed class PortaTelemetryMiddleware(RequestDelegate next, IOptions<PortaCoreOptions> coreOptions, PortaMetrics metrics)
+internal sealed class PortaTelemetryMiddleware(RequestDelegate next, IOptions<PortaCoreOptions> coreOptions, PortaMetrics metrics)
 {
     private readonly bool _enabled = coreOptions.Value.EnableTelemetry;
 

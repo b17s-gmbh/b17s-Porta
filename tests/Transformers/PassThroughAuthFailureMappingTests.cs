@@ -62,7 +62,7 @@ public sealed class PassThroughAuthFailureMappingTests
                     services.AddSingleton<IAuthenticationProvider, AnonymousAuthProvider>();
                     services.AddSingleton<IBackendAuthHandler>(new ThrowingAuthHandler("Throwing"));
 
-                    services.AddHttpClient(BackendCaller.HttpClientName)
+                    services.AddHttpClient(PortaHttpClients.Backend)
                         .ConfigurePrimaryHttpMessageHandler(() => captureHandler);
                 });
                 webHost.Configure(app =>

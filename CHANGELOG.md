@@ -6,8 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-09-30
+### Breaking Change
+- Implementation types are now `internal`; use their public interfaces or the registration extension methods instead:
+  - Services: `DiscoveryService`, `SessionManagementService`, `SessionTokenStorage`, `ITokenStorage`, `AccessTokenRefreshService`, `ApiTokenService`, `ClientCredentialsTokenService`, `TokenExchangeService`, `TokenRefreshService`, `TokenRevocationService`, `ReferenceTokenService`, `ReferenceTokenAuthenticator`, `BackendCaller`, `ContentSerializer`, `BackendAuthHandlerRegistry`, `TrustedHostValidator`, `ITrustedHostValidator`, `PortaMetrics`
+  - Auth providers: `SessionAuthProvider`, `JwtBearerAuthProvider`, `ReferenceTokenAuthProvider`, `IAuthenticationProviderRegistration`
+  - Middleware: `OidcLoginMiddleware`, `OidcLogoutMiddleware`, `OidcBackChannelLogoutMiddleware`, `SessionAdminMiddleware`, `PortaTelemetryMiddleware`, `BasicAuthMiddleware`, `IReturnUrlProtector`
+  - Other: `IntrospectionResponse`, `JwtValidationParameters`, `JwtValidationResult`, `JwtValidationFailureReason`, `WhenPredicateMatcherPolicy`, `WhenPredicateMetadata`
+- Named HttpClient constants moved to `PortaHttpClients` (values unchanged): `BackendCaller.HttpClientName` → `PortaHttpClients.Backend`, `BackendCaller.HttpClientNameWithRetries` → `PortaHttpClients.BackendWithRetries`, `AuthenticationServiceExtensions.TokenHttpClientName` → `PortaHttpClients.Token`, `ReferenceTokenService.HttpClientName` → `PortaHttpClients.ReferenceTokenIntrospection`.
 ### Added
 - `private_key_jwt` client authentication (RFC 7523 §2.2)
+- `PortaHttpClients`: names of Porta's named HttpClients, for customizing them (proxy, message handlers); see [configuration docs](docs/configuration.md#customizing-portas-httpclients---portahttpclients).
+### Updated
+- Nuget dependencies
 
 ## [0.5.0] - 2026-09-02
 ### Updated

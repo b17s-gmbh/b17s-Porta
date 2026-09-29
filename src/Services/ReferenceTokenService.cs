@@ -5,6 +5,7 @@ using System.Text.Json;
 using b17s.Porta.Auth.Discovery;
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Extensions;
 
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -15,18 +16,13 @@ namespace b17s.Porta.Services;
 /// Reference token (opaque token) service that validates tokens via introspection endpoint.
 /// Uses named HttpClient with resilience policies.
 /// </summary>
-public sealed class ReferenceTokenService(
+internal sealed class ReferenceTokenService(
     IHttpClientFactory httpClientFactory,
     IDiscoveryService discoveryService,
     ILogger<ReferenceTokenService> logger,
     IOptionsMonitor<ReferenceTokenAuthOptions> optionsMonitor,
     IOptionsMonitor<PortaCoreOptions> coreOptionsMonitor) : IReferenceTokenService
 {
-    /// <summary>
-    /// Named HttpClient identifier for the introspection client.
-    /// </summary>
-    public const string HttpClientName = "ReferenceTokenIntrospection";
-
     private const string SignerSlot = "ReferenceTokenAuth";
 
     // private_key_jwt key material, parsed once per configured value (reloads swap it).
@@ -61,7 +57,7 @@ public sealed class ReferenceTokenService(
             return null;
         }
 
-        var httpClient = httpClientFactory.CreateClient(HttpClientName);
+        var httpClient = httpClientFactory.CreateClient(PortaHttpClients.ReferenceTokenIntrospection);
         var request = new HttpRequestMessage(HttpMethod.Post, introspectionEndpoint);
 
         // Build payload and add client credentials

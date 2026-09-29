@@ -28,7 +28,7 @@ namespace b17s.Porta.Middleware;
 /// strictly admin-only, and every successful action is audit-logged with the admin's
 /// identity and the target subject.
 /// </remarks>
-public sealed class SessionAdminMiddleware(
+internal sealed class SessionAdminMiddleware(
     RequestDelegate next,
     IOptions<SessionAdminOptions> options,
     ILogger<SessionAdminMiddleware> logger,

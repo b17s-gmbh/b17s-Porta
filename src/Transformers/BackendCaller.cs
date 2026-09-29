@@ -6,6 +6,7 @@ using System.Text.Json;
 
 using b17s.Porta.Auth.Tokens;
 using b17s.Porta.Configuration;
+using b17s.Porta.Extensions;
 using b17s.Porta.Telemetry;
 
 using Microsoft.AspNetCore.Http;
@@ -32,7 +33,7 @@ namespace b17s.Porta.Transformers;
 /// <see cref="RefreshUserTokenAsync"/>.
 /// </para>
 /// </remarks>
-public sealed class BackendCaller(
+internal sealed class BackendCaller(
     IHttpClientFactory httpClientFactory,
     IBackendAuthHandlerRegistry authHandlerRegistry,
     IContentSerializer contentSerializer,
@@ -56,22 +57,9 @@ public sealed class BackendCaller(
     private string? _consumedStaleToken;
     private bool _refreshAttempted;
     /// <summary>
-    /// The name of the named <see cref="HttpClient"/> used for backend calls without the
-    /// resilience (retry) pipeline. Registered by <c>AddPortaCore</c>.
-    /// </summary>
-    public const string HttpClientName = "Porta.BackendCaller";
-
-    /// <summary>
-    /// The name of the named <see cref="HttpClient"/> used for backend calls with the standard
-    /// resilience (retry/back-off) pipeline, selected when <see cref="BackendRequest.EnableRetries"/>
-    /// is set. Registered by <c>AddPortaCore</c>.
-    /// </summary>
-    public const string HttpClientNameWithRetries = "Porta.BackendCaller.WithRetries";
-
-    /// <summary>
     /// Per-request key carrying the endpoint's retry budget (the <c>WithRetries(n)</c> value) on
     /// the outbound <see cref="HttpRequestMessage"/>. The retry pipeline on
-    /// <see cref="HttpClientNameWithRetries"/> bakes a single, app-wide attempt count, so the
+    /// <see cref="PortaHttpClients.BackendWithRetries"/> bakes a single, app-wide attempt count, so the
     /// per-endpoint count is threaded here and enforced by the pipeline's <c>ShouldHandle</c> gate
     /// (see <c>AddPortaCore</c>). Read via <c>HttpResilienceContextExtensions.GetRequestMessage</c>
     /// so it is honored on both response and exception outcomes. The pipeline's own
@@ -478,7 +466,7 @@ public sealed class BackendCaller(
         activity?.SetTag("bff.raw_request", true);
 
         // Select the appropriate HttpClient based on retry settings
-        var clientName = request.EnableRetries ? HttpClientNameWithRetries : HttpClientName;
+        var clientName = request.EnableRetries ? PortaHttpClients.BackendWithRetries : PortaHttpClients.Backend;
         var httpClient = httpClientFactory.CreateClient(clientName);
 
         if (request.Timeout.HasValue)
@@ -942,7 +930,7 @@ public sealed class BackendCaller(
         activity?.SetTag("bff.backend.refresh_retry", isRefreshRetry);
 
         // Select the appropriate HttpClient based on retry settings
-        var clientName = request.EnableRetries ? HttpClientNameWithRetries : HttpClientName;
+        var clientName = request.EnableRetries ? PortaHttpClients.BackendWithRetries : PortaHttpClients.Backend;
         var httpClient = httpClientFactory.CreateClient(clientName);
 
         if (request.Timeout.HasValue)

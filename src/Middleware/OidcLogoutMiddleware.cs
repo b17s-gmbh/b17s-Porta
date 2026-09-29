@@ -25,7 +25,7 @@ namespace b17s.Porta.Middleware;
 ///     token from the cookie auth ticket. The framework does not do this.</item>
 /// </list>
 /// </summary>
-public sealed class OidcLogoutMiddleware(
+internal sealed class OidcLogoutMiddleware(
     RequestDelegate next,
     IOptions<OidcLogoutOptions> options,
     ILogger<OidcLogoutMiddleware> logger,

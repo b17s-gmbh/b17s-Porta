@@ -358,7 +358,7 @@ public sealed class ClientCredentialsAuthHandler(
 /// </list>
 /// The handler requires <see cref="IApiTokenService"/> to be registered - this happens automatically
 /// when <c>AddPortaAuthentication()</c> or <c>AddPortaOidcAuth()</c> is called. Without it, the handler
-/// throws and <see cref="BackendCaller"/> converts the failure into a 401 backend-auth error.
+/// throws and the backend caller converts the failure into a 401 backend-auth error.
 /// <para>
 /// The underlying <see cref="ITokenExchangeService"/> needs the IdP token endpoint plus client
 /// credentials. The handler resolves the token endpoint from the OIDC discovery document at
@@ -474,7 +474,7 @@ public sealed class TokenExchangeAuthHandler(
 /// Thrown by a backend auth handler when it cannot apply authentication because of a server-side
 /// configuration or dependency problem (e.g. token exchange selected with no audience configured, or
 /// <c>IApiTokenService</c> not registered) - as opposed to a genuine rejection of the user's
-/// credentials. <see cref="BackendCaller"/> maps this to <see cref="BackendErrorType.ConfigurationError"/>
+/// credentials. The backend caller maps this to <see cref="BackendErrorType.ConfigurationError"/>
 /// (a 5xx-class result) so operators aren't misled into chasing a user-auth failure.
 /// Derives from <see cref="InvalidOperationException"/> for backwards compatibility with callers that
 /// already catch that type.

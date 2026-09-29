@@ -18,14 +18,6 @@ namespace b17s.Porta.Tests.Extensions;
 public class AuthHttpClientRegistrationTests
 {
     [Fact]
-    public void TokenRefreshService_HttpClientName_MatchesRegisteredName()
-    {
-        // Pure compile-time alias check - the const must literally equal the
-        // registration string. Catches a hand-typed regression in either spot.
-        Assert.Equal(AuthenticationServiceExtensions.TokenHttpClientName, TokenRefreshService.HttpClientName);
-    }
-
-    [Fact]
     public void NamedTokenClient_IsRegisteredWithClientActionsAndResilienceHandler()
     {
         var sp = BuildServices().BuildServiceProvider();
@@ -37,7 +29,7 @@ public class AuthHttpClientRegistrationTests
         // configures Timeout/Headers) and at least one message-handler action (the
         // standard resilience handler). An unregistered name yields empty lists.
         var options = sp.GetRequiredService<IOptionsMonitor<HttpClientFactoryOptions>>()
-            .Get(AuthenticationServiceExtensions.TokenHttpClientName);
+            .Get(PortaHttpClients.Token);
 
         Assert.NotEmpty(options.HttpClientActions);
         Assert.NotEmpty(options.HttpMessageHandlerBuilderActions);
@@ -70,7 +62,7 @@ public class AuthHttpClientRegistrationTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => check.StartAsync(CancellationToken.None));
-        Assert.Contains(AuthenticationServiceExtensions.TokenHttpClientName, ex.Message);
+        Assert.Contains(PortaHttpClients.Token, ex.Message);
     }
 
     private static IServiceCollection BuildServices()

@@ -11,7 +11,7 @@ namespace b17s.Porta.Transformers;
 /// Creates new predicate metadata.
 /// </remarks>
 /// <param name="predicate">The predicate to evaluate at request time</param>
-public sealed class WhenPredicateMetadata(Func<HttpContext, bool> predicate)
+internal sealed class WhenPredicateMetadata(Func<HttpContext, bool> predicate)
 {
     /// <summary>
     /// The predicate function that determines if this endpoint should handle the request.
@@ -34,7 +34,7 @@ public sealed class WhenPredicateMetadata(Func<HttpContext, bool> predicate)
 /// - Header-based routing: handle only requests with specific headers
 /// - Query parameter routing: match based on query string values
 /// </remarks>
-public sealed class WhenPredicateMatcherPolicy : MatcherPolicy, IEndpointSelectorPolicy
+internal sealed class WhenPredicateMatcherPolicy : MatcherPolicy, IEndpointSelectorPolicy
 {
     /// <summary>
     /// Order determines when this policy runs relative to other matcher policies.

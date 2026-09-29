@@ -14,7 +14,7 @@ namespace b17s.Porta.Tests.Services;
 
 /// <summary>
 /// Locks in the DI wiring for <see cref="ReferenceTokenServiceExtensions.AddReferenceTokenService"/>:
-/// the named HttpClient name must match <see cref="ReferenceTokenService.HttpClientName"/> exactly,
+/// the named HttpClient name must match <see cref="PortaHttpClients.ReferenceTokenIntrospection"/> exactly,
 /// the standard resilience handler must be wired, and options binding must flow through.
 /// </summary>
 public sealed class ReferenceTokenServiceExtensionsTests
@@ -48,7 +48,7 @@ public sealed class ReferenceTokenServiceExtensionsTests
             .BuildServiceProvider();
 
         var factoryOptions = sp.GetRequiredService<IOptionsMonitor<HttpClientFactoryOptions>>()
-            .Get(ReferenceTokenService.HttpClientName);
+            .Get(PortaHttpClients.ReferenceTokenIntrospection);
 
         Assert.NotEmpty(factoryOptions.HttpClientActions);
         Assert.NotEmpty(factoryOptions.HttpMessageHandlerBuilderActions);
@@ -66,7 +66,7 @@ public sealed class ReferenceTokenServiceExtensionsTests
             .BuildServiceProvider();
 
         var client = sp.GetRequiredService<IHttpClientFactory>()
-            .CreateClient(ReferenceTokenService.HttpClientName);
+            .CreateClient(PortaHttpClients.ReferenceTokenIntrospection);
 
         Assert.True(client.DefaultRequestHeaders.Contains("X-Test-Header"));
         Assert.Equal("marker", client.DefaultRequestHeaders.GetValues("X-Test-Header").Single());
@@ -108,7 +108,7 @@ public sealed class ReferenceTokenServiceExtensionsTests
             .BuildServiceProvider();
 
         var resilience = sp.GetRequiredService<IOptionsMonitor<HttpStandardResilienceOptions>>()
-            .Get(ReferenceTokenService.HttpClientName + "-standard");
+            .Get(PortaHttpClients.ReferenceTokenIntrospection + "-standard");
 
         Assert.Equal(TimeSpan.FromSeconds(10), resilience.AttemptTimeout.Timeout);
         Assert.Equal(TimeSpan.FromSeconds(30), resilience.CircuitBreaker.SamplingDuration);
@@ -126,7 +126,7 @@ public sealed class ReferenceTokenServiceExtensionsTests
             .BuildServiceProvider();
 
         var resilience = sp.GetRequiredService<IOptionsMonitor<HttpStandardResilienceOptions>>()
-            .Get(ReferenceTokenService.HttpClientName + "-standard");
+            .Get(PortaHttpClients.ReferenceTokenIntrospection + "-standard");
 
         Assert.Equal(TimeSpan.FromSeconds(2), resilience.AttemptTimeout.Timeout);
     }
@@ -205,7 +205,7 @@ public sealed class ReferenceTokenServiceExtensionsTests
         // resilience handler via the same mechanism).
         var client = services.BuildServiceProvider()
             .GetRequiredService<IHttpClientFactory>()
-            .CreateClient(ReferenceTokenService.HttpClientName);
+            .CreateClient(PortaHttpClients.ReferenceTokenIntrospection);
 
         Assert.Single(client.DefaultRequestHeaders.Accept);
     }
@@ -231,7 +231,7 @@ public sealed class ReferenceTokenServiceExtensionsTests
         // Compile-time alias check: the registration uses the constant, so if a
         // future edit hardcodes a string here the const stays in sync. This locks
         // in that the constant is the single source of truth.
-        Assert.Equal("ReferenceTokenIntrospection", ReferenceTokenService.HttpClientName);
+        Assert.Equal("ReferenceTokenIntrospection", PortaHttpClients.ReferenceTokenIntrospection);
     }
 
     private static IServiceCollection BaseServices()

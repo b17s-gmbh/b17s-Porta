@@ -6,7 +6,7 @@ namespace b17s.Porta.Auth.Tokens;
 /// <summary>
 /// Response from OAuth2 token introspection endpoint (RFC 7662)
 /// </summary>
-public sealed class IntrospectionResponse
+internal sealed class IntrospectionResponse
 {
     /// <summary>
     /// Whether the token is currently active

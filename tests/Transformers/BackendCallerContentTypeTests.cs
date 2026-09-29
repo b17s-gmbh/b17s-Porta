@@ -86,7 +86,7 @@ public sealed class BackendCallerContentTypeTests
                     // Replace the primary HTTP handler for the BackendCaller's named client
                     // so we can intercept outgoing requests without standing up a real server.
                     services.ConfigureHttpClientDefaults(b => { });
-                    services.AddHttpClient(BackendCaller.HttpClientName)
+                    services.AddHttpClient(PortaHttpClients.Backend)
                         .ConfigurePrimaryHttpMessageHandler(() => captureHandler);
                 });
                 webHost.Configure(app =>

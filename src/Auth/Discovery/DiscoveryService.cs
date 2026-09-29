@@ -15,7 +15,7 @@ namespace b17s.Porta.Auth.Discovery;
 /// Provides OIDC discovery document loading with automatic caching and refresh.
 /// Uses Microsoft.IdentityModel.Protocols.OpenIdConnect for proper cache management.
 /// </summary>
-public sealed class DiscoveryService(
+internal sealed class DiscoveryService(
     IHttpClientFactory httpClientFactory,
     IOptionsMonitor<SessionAuthenticationConfiguration> configMonitor,
     ILogger<DiscoveryService> logger,
@@ -158,7 +158,7 @@ public sealed class DiscoveryService(
                 && (referenceTokenOptionsMonitor?.CurrentValue.RequireHttpsMetadata ?? true);
 
             var retriever = new HttpDocumentRetriever(
-                httpClientFactory.CreateClient(AuthenticationServiceExtensions.TokenHttpClientName))
+                httpClientFactory.CreateClient(PortaHttpClients.Token))
             {
                 RequireHttps = requireHttps
             };

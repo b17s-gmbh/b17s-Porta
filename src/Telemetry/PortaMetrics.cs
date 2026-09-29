@@ -6,7 +6,7 @@ namespace b17s.Porta.Telemetry;
 /// <summary>
 /// Central metrics for BFF business insights using OpenTelemetry-compatible Meter API
 /// </summary>
-public sealed class PortaMetrics
+internal sealed class PortaMetrics
 {
     private static readonly double[] LatencyBucketsMs =
     [

@@ -34,15 +34,6 @@ namespace b17s.Porta.Extensions;
 public static class AuthenticationServiceExtensions
 {
     /// <summary>
-    /// Name of the resilient <see cref="HttpClient"/> used by all token-flow services
-    /// (refresh, exchange, revocation) and OIDC discovery. Registered in
-    /// <see cref="AddTokenServices"/> with <c>AddStandardResilienceHandler</c>; any
-    /// consumer that fetches via <see cref="IHttpClientFactory"/> must use this name
-    /// to inherit timeout/retry/circuit-breaker policy.
-    /// </summary>
-    public const string TokenHttpClientName = "Porta.TokenClient";
-
-    /// <summary>
     /// Adds the full BFF authentication pipeline:
     /// <list type="bullet">
     ///   <item>ASP.NET Core Cookie + OpenIdConnect schemes (the framework handles state/nonce/PKCE/code-exchange/id_token validation).</item>
@@ -487,7 +478,7 @@ public static class AuthenticationServiceExtensions
         // IOptions<SessionAuthenticationConfiguration> pipeline (read at resolve /
         // options-build time) rather than an eager registration-time snapshot, so
         // external Configure/PostConfigure of the configuration is honored.
-        services.AddHttpClient(TokenHttpClientName, client =>
+        services.AddHttpClient(PortaHttpClients.Token, client =>
         {
             client.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
@@ -689,8 +680,8 @@ public static class AuthenticationServiceExtensions
     /// principal gate work for opaque tokens with no consumer-side auth code.
     /// </summary>
     /// <remarks>
-    /// The scheme and the in-pipeline <see cref="ReferenceTokenAuthProvider"/> share one
-    /// <see cref="ReferenceTokenAuthenticator"/>, so an opaque token is introspected at most once per
+    /// The scheme and the in-pipeline reference-token provider (<c>AddReferenceTokenAuthentication</c>) share
+    /// one authenticator, so an opaque token is introspected at most once per
     /// request. The scheme registers additively and becomes the default scheme only when no other
     /// default has been set, so a reference-token-only BFF needs nothing more while a multi-frontend BFF
     /// keeps its existing default (e.g. the cookie default from <c>AddPortaAuthentication</c>, so browser

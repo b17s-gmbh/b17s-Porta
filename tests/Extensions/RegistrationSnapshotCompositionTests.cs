@@ -78,7 +78,7 @@ public class RegistrationSnapshotCompositionTests
         services.PostConfigure<PortaCoreOptions>(o => o.DefaultTimeout = TimeSpan.FromSeconds(42));
 
         var sp = services.BuildServiceProvider();
-        var client = sp.GetRequiredService<IHttpClientFactory>().CreateClient(BackendCaller.HttpClientName);
+        var client = sp.GetRequiredService<IHttpClientFactory>().CreateClient(PortaHttpClients.Backend);
 
         Assert.Equal(TimeSpan.FromSeconds(42), client.Timeout);
     }

@@ -89,7 +89,7 @@ public sealed class PortaTestHost
     /// </remarks>
     public PortaTestHost WithReferenceToken(FakeIdp idp, Action<ReferenceTokenAuthOptions>? configure = null)
     {
-        // Setting _idp routes the discovery client (TokenHttpClientName) to the fake authority in
+        // Setting _idp routes the discovery client (PortaHttpClients.Token) to the fake authority in
         // StartAsync, leaving the composite with only the reference-token provider. It does NOT
         // enable the OIDC scheme (that needs _addPortaAuthentication), so the harmless OIDC
         // PostConfigure callback never executes.
@@ -108,7 +108,7 @@ public sealed class PortaTestHost
             });
 
             // Route the introspection client to the fake authority's /introspect endpoint.
-            services.AddHttpClient(ReferenceTokenService.HttpClientName)
+            services.AddHttpClient(PortaHttpClients.ReferenceTokenIntrospection)
                 .ConfigurePrimaryHttpMessageHandler(() => idp.BackchannelHandler);
 
             // ReferenceTokenService -> IDiscoveryService is normally pulled in by
@@ -208,8 +208,8 @@ public sealed class PortaTestHost
     public PortaTestHost WithBackend(FakeBackend backend)
     {
         _defaultBackend = backend;
-        _backendsByHttpClient[BackendCaller.HttpClientName] = backend;
-        _backendsByHttpClient[BackendCaller.HttpClientNameWithRetries] = backend;
+        _backendsByHttpClient[PortaHttpClients.Backend] = backend;
+        _backendsByHttpClient[PortaHttpClients.BackendWithRetries] = backend;
         // The backend we forward to is, by definition, a trusted internal host. Register its
         // authority in PortaCore:TrustedHosts so user-token-forwarding policies (WithUserToken,
         // BearerToken, TokenExchange) clear the startup + runtime trusted-host gate - mirroring a
@@ -361,7 +361,7 @@ public sealed class PortaTestHost
                                 new Microsoft.IdentityModel.Protocols.HttpDocumentRetriever(opts.Backchannel) { RequireHttps = false });
                         });
 
-                        services.AddHttpClient(AuthenticationServiceExtensions.TokenHttpClientName)
+                        services.AddHttpClient(PortaHttpClients.Token)
                             .ConfigurePrimaryHttpMessageHandler(() => idp.BackchannelHandler);
                     }
 

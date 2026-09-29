@@ -11,7 +11,7 @@ namespace b17s.Porta.Extensions;
 /// registered.
 ///
 /// Without this check, a typo or accidental rename of
-/// <see cref="AuthenticationServiceExtensions.TokenHttpClientName"/> causes
+/// <see cref="PortaHttpClients.Token"/> causes
 /// <see cref="IHttpClientFactory.CreateClient(string)"/> to silently return
 /// the default, unconfigured client - losing the standard resilience handler
 /// (timeout, retry, circuit breaker) and exposing every auth path to OS-level
@@ -23,7 +23,7 @@ internal sealed class AuthHttpClientStartupCheck(
 {
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        var name = AuthenticationServiceExtensions.TokenHttpClientName;
+        var name = PortaHttpClients.Token;
         var options = httpClientOptions.Get(name);
 
         // An unregistered name resolves to an options instance with no client

@@ -9,7 +9,7 @@ namespace b17s.Porta.Auth.Sessions;
 /// <summary>
 /// Session-based token storage with optional encryption via Data Protection.
 /// </summary>
-public sealed class SessionTokenStorage(
+internal sealed class SessionTokenStorage(
     ILogger<SessionTokenStorage> logger,
     IDataProtectionProvider? dataProtectionProvider = null) : ITokenStorage
 {

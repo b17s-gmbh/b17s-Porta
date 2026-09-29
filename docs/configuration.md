@@ -53,7 +53,7 @@ builder.Services.AddPortaCore(options => {
 
     // Clock skew applied when deciding whether an access token is "near expiry"
     // and should be proactively refreshed (default: 60 seconds). Used by both
-    // AccessTokenRefreshService and the ApiTokenService cache.
+    // session token refresh and the API token cache.
     options.TokenRefreshSkew = TimeSpan.FromSeconds(60);
 
     // Whether to log raw IdP error response bodies on token exchange/refresh/
@@ -268,6 +268,24 @@ When `BackendAuthPolicies.TokenExchange` is selected without an audience source 
 - Token services: `ITokenRefreshService`, `ITokenRevocationService`, `ITokenExchangeService`, `IApiTokenService`.
 - `ISessionManagementService` for admin force-logout and back-channel logout flows.
 - `OnTokenValidated` event handler that registers the session metadata + encrypted refresh token after successful sign-in.
+
+### Customizing Porta's HttpClients - `PortaHttpClients`
+
+Porta makes its outbound calls through named `HttpClient`s from `IHttpClientFactory`. To add a proxy, a message handler or other client configuration, configure the client by its name after registering Porta:
+
+```csharp
+builder.Services.AddHttpClient(PortaHttpClients.Backend)
+    .AddHttpMessageHandler<MyOutboundHandler>();
+```
+
+| Constant | Used for |
+|----------|----------|
+| `PortaHttpClients.Backend` | Backend calls from transformers, pass-through and raw-forward endpoints |
+| `PortaHttpClients.BackendWithRetries` | Backend calls with retries enabled (`WithRetries(n)`) |
+| `PortaHttpClients.Token` | Calls to the IdP: discovery, token refresh, exchange, revocation, client credentials |
+| `PortaHttpClients.ReferenceTokenIntrospection` | RFC 7662 introspection for reference tokens |
+
+To change resilience settings, prefer the dedicated options (`PortaCore` retry settings, `SessionAuthentication.Resilience`, the `configureResilience` parameter of the reference-token registrations) over adding a second resilience handler.
 
 ### Registration Order
 

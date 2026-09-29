@@ -12,7 +12,9 @@ The framework uses `IAuthenticationProvider` to expose user identity to transfor
 |----------|----------|---------------|
 | `SessionAuthProvider` | Reads the cookie auth ticket populated by the framework's OIDC handler. Default when you call `AddPortaAuthentication`. | Yes (via `IAccessTokenRefreshService`) |
 | `ReferenceTokenAuthProvider` | Reference token validation via introspection, in-pipeline only (`AddReferenceTokenAuthentication`) — resolves `AuthContext` but does **not** set `HttpContext.User`. Recommended for API-style callers. | No |
-| `JwtBearerAuthProvider` | Inbound JWT validation via OIDC discovery / JWKS (opt-in fallback) | No |
+| `JwtBearerAuthProvider` | Inbound JWT validation via OIDC discovery / JWKS (opt-in fallback, `AddPortaJwtAuthentication`) | No |
+
+The provider classes are internal. Register them through the extension methods named above; their names identify them in logs and in the `provider` telemetry tag.
 
 For opaque tokens, prefer registering them as a **scheme** rather than provider-only:
 
@@ -59,7 +61,7 @@ After `AddPortaAuthentication` registers the framework's cookie + OIDC handlers,
 - Returns `access_token`, `refresh_token`, `id_token`, `expires_at` plus claims as an `AuthenticationContext`.
 - Delegates near-expiry refresh to `IAccessTokenRefreshService`, which acquires a per-user lock, calls the IdP's token endpoint, updates the ticket via `SignInAsync`, and patches the encrypted refresh token on session metadata so `TerminateSessionAsync(..., revokeTokens: true)` always targets the current token.
 
-You don't typically construct or interact with `SessionAuthProvider` directly - it's resolved as `IAuthenticationProvider` in transformers.
+`SessionAuthProvider` is internal: `AddPortaAuthentication` registers it, and transformers resolve it as `IAuthenticationProvider`.
 
 ### ReferenceTokenAuthOptions
 

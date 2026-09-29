@@ -4,7 +4,7 @@ The BFF framework automatically generates OpenTelemetry traces and metrics for a
 
 ## Automatic Instrumentation
 
-When `EnableTelemetry` is true (default), the framework automatically instruments transformer and raw-forward endpoint execution, backend HTTP calls, authentication, token exchange/refresh, session lifecycle, CSRF validation, the session-admin endpoint, and OIDC back-channel logout. Activities are emitted by `PortaActivitySource` (source name `b17s.Porta`) and metrics by `PortaMetrics` on the same meter name. Each activity uses a **fixed category name**; the specific transformer/backend is carried on a **tag**, never baked into the activity name (see the note below).
+When `EnableTelemetry` is true (default), the framework automatically instruments transformer and raw-forward endpoint execution, backend HTTP calls, authentication, token exchange/refresh, session lifecycle, CSRF validation, the session-admin endpoint, and OIDC back-channel logout. Activities are emitted by `PortaActivitySource` (source name `b17s.Porta`) and metrics on the same meter name. Each activity uses a **fixed category name**; the specific transformer/backend is carried on a **tag**, never baked into the activity name (see the note below).
 
 The whole-pipeline request instrumentation in the last row is **opt-in** - the BFF has no other always-on middleware, so it only runs when you add [`app.UsePortaTelemetry()`](#request-lifecycle-instrumentation-useportatelemetry).
 

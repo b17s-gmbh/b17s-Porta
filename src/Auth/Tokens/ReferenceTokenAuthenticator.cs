@@ -25,7 +25,7 @@ namespace b17s.Porta.Auth.Tokens;
 /// the token is introspected (or cache-read) only once. Cross-request validation still flows through
 /// the distributed cache, where binding is re-checked on every hit against the current options.
 /// </remarks>
-public sealed class ReferenceTokenAuthenticator(
+internal sealed class ReferenceTokenAuthenticator(
     IReferenceTokenService referenceTokenService,
     IDistributedCache cache,
     ILogger<ReferenceTokenAuthenticator> logger,

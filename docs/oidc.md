@@ -372,7 +372,7 @@ If any of these are missing, termination still succeeds locally (cookie + ticket
 - `Porta/13815`: `no encrypted refresh token on metadata`
 - `Porta/13816`: `failed to decrypt refresh token (data protection key rotation?)`
 
-`AccessTokenRefreshService` updates the encrypted refresh token after every successful rotation, so revocation always targets the current refresh token (not a stale rotated-out one).
+Session token refresh updates the encrypted refresh token after every successful rotation, so revocation always targets the current refresh token (not a stale rotated-out one).
 
 ## Session Administration
 

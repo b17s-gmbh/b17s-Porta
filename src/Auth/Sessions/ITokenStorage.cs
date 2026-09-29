@@ -5,7 +5,7 @@ namespace b17s.Porta.Auth.Sessions;
 /// <summary>
 /// Abstraction for token storage to decouple authentication providers from session-based storage
 /// </summary>
-public interface ITokenStorage
+internal interface ITokenStorage
 {
     /// <summary>
     /// Retrieves a token value by key.
